@@ -1,5 +1,7 @@
-#include <immintrin.h>
 #include <atomic>
+#include <condition_variable>
+#include <mutex>
+
 #define MIN_SLAVE_DEPTH 7								// min depth where slaves are called
 #define SLOG 0 											// log slave activities (19)
 #define SLOG_CREATE 1
@@ -20,7 +22,7 @@ public:
 	assert(lock>10);
 	assert(lock<1001);
     while (lock.fetch_sub(1, std::memory_order_acquire) != 1000) 
-        while (lock.load(std::memory_order_relaxed) < 1000) {_mm_pause();} 
+	    while (lock.load(std::memory_order_relaxed) < 1000) { __builtin_ia32_pause(); }
 	assert(lock>10);
 	assert(lock<1001);
   } 
@@ -34,7 +36,7 @@ typedef struct{
 	UINT64 slave_bits;		// bits are set for threads working on this sp. Including master (bit 0)
 	board b;				// board
 	move_list* mlp;			// pointer to move list object
-	CONDITION_VARIABLE CVsp;// master is allowed to run on this split point (last slave is done with it)
+	std::condition_variable CVsp;// master is allowed to run on this split point (last slave is done with it)
 	unsigned int c_0;		// count of items not analyzed
 	unsigned int c_1;		// count of slaves working on this split-point (master is always working on it)
 	int be;					// beta
@@ -60,11 +62,9 @@ typedef struct{
 extern board *b_s;
 extern split_point_type *sp_all;
 extern UINT64 sp_all_mask;	
-extern SRWLOCK L1;
-extern CONDITION_VARIABLE CV1;
-extern int slave_count;
+extern std::mutex L1;
+extern std::condition_variable CV1;
+extern std::atomic<int> slave_count;
 extern UINT64 thread_running_mask;
 extern unsigned int Threads;
 extern UINT64 sp_open_mask;
-
-DWORD WINAPI SlaveThreadProc(PVOID);

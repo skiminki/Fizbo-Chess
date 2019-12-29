@@ -1,8 +1,14 @@
-#define STRICT
-#define _CRT_SECURE_NO_WARNINGS
-#define NO_KERNEL_LIST_ENTRY_CHECKS
-#include "resource.h"
-#include <windows.h>
+
+#ifndef FIZBO_CHESS_H_INCLUDED
+#define FIZBO_CHESS_H_INCLUDED
+
+#include <cstdint>
+
+#include "bitutils.h"
+#include "os-compat.h"
+
+using UINT64 = std::uint64_t;
+
 #include <stdio.h>
 #include <assert.h>
 
@@ -11,25 +17,27 @@
 #define ALLOW_LOG 0
 #define calc_pst 0		// 1=calculate in eval, 0=update incrementally. Here 0 is slightly faster - use that.
 #define player_zorb 0xab42094fee35f92e
-#define USE_AVX 0		// this is 5% faster. Also turn off AVX2 compiler switch.
+
+#ifdef __AVX__
+#define USE_AVX 1		// this is 5% faster. Also turn off AVX2 compiler switch.
+#else
+#define USE_AVX 0
+#endif
+
 #define SPS_CREATED_NUM_MAX 22 // max SPs created by 1 thread
 
+#undef USE_EGTB
+#define USE_EGTB 0 // WAR
+
 // portable
-#if USE_AVX
-	#define USE_PEXT 1					// 1 portable. 3.9%.
-	#define blsr64l(a) _blsr_u64(a)		// instruction
-	#define blsr32l(a) _blsr_u32(a)		// instruction
-#else
-	#define USE_PEXT 0					// use magics, not PEXT
-	#define blsr64l(a) ((a)&(a-1))		// legacy
-	#define blsr32l(a) (unsigned int)(((unsigned int)a)&(((unsigned int)a)-1)) // legacy
-#endif
+#define blsr64l(a) BitUtils::blsr(static_cast<uint64_t>(a))
+#define blsr32l(a) BitUtils::blsr(static_cast<uint32_t>(a))
 
 //#define popcnt64l(a) __popcnt64(a)		  // instruction
 #define BSF64l(a,b) BitScanForward64(a,b) // instruction
 #define BSR64l(a,b) BitScanReverse64(a,b) // instruction
 
-#define popcnt64l(a) f_popcnt64(a) // legacy: +13% run time.
+#define popcnt64l(a) BitUtils::popcount(static_cast<uint64_t>(a)) // legacy: +13% run time.
 
 //#define BSF64l(a,b) f_BSF64(a,b) // 32-bit legacy
 //#define BSR64l(a,b) f_BSR64(a,b) // 32-bit legacy
@@ -40,14 +48,11 @@
 #define last_move_hash_adj zorb[5][0][(b->last_move&56)+7] // only use file of last move
 enum EvalType {Full,NoQueens};// Different eval types, used as template parameter
 
-#if ENGINE
-	#define get_time (int)timeGetTime // timer function definition: f_timer vs timeGetTime
-#else
-	#define get_time f_timer // timer function definition: f_timer vs timeGetTime
-#endif
+#define get_time getTimeMs
+
 #if ALLOW_LOG
 #if ENGINE
-	#define LOG_FILE1 "c://xde//chess//out//log_e.csv" // main log file for the engine
+	#define LOG_FILE1 "/tmp/log_e.csv" // main log file for the engine
 #else
 	#define LOG_FILE1 "c://xde//chess//out//log_i.csv" // main log file for the interface
 #endif
@@ -266,7 +271,7 @@ unsigned int player_is_in_check(board*,unsigned int);
 unsigned int move_list_is_good(board*,unsigned char*,unsigned int);
 unsigned int checkmate(board*);
 unsigned int bitboards_are_good(board*);
-void init_board_FEN(char*,board*);
+void init_board_FEN(const char*,board*);
 void set_bitboards(board*);
 void solve_prep(board*);
 void init_all(unsigned int);
@@ -284,7 +289,7 @@ void init_threads(unsigned int);
 unsigned int move_gives_check(board *,unsigned int,unsigned int);
 unsigned int moving_piece_is_pinned(board *,unsigned int,unsigned int,unsigned int);
 int f_timer(void);
-void pass_message_to_GUI(char*);
+void pass_message_to_GUI(const char*);
 unsigned int hashfull(void);
 
 // vars
@@ -308,7 +313,7 @@ extern UINT64 bishop_masks[];
 extern UINT64 rook_masks[];
 extern UINT64 king_masks[];
 extern UINT64 dir_mask[5][64];
-extern HWND hWnd_global;
+
 extern const unsigned char flips[64][8];
 extern const UINT64 passed_mask[];
 extern const UINT64 blocked_mask[];
@@ -317,3 +322,5 @@ extern const unsigned int mat_key_mult[];
 extern hash *h;
 extern const UINT64 pawn_attacks[2][64];
 extern unsigned int tb_loaded,UseEGTBInsideSearch,EGTBProbeLimit;
+
+#endif

@@ -1,6 +1,5 @@
 // pawn scores
 #include "chess.h"
-#include <intrin.h>
 #include "coeffs.h"
 
 UINT64* ph; // pawn hash table
@@ -114,7 +113,7 @@ int pawn_score(board *b){// return scores for WHITE.
 	volatile UINT64 *h1;
 	UINT64 w_bb,b_bb,w_bb_t,b_bb_t;
 	pTT h;
-	unsigned long bit;
+	uint32_t bit;
 	unsigned int i,j,sq[2][8],sq_cnt[2]; //sq: list of all pawns.
 	int sk4;
 	

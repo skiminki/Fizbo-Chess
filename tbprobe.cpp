@@ -1,7 +1,7 @@
 // Define DECOMP64 when compiling for a 64-bit platform.
 #define DECOMP64
 #include "chess.h"
-#include <intrin.h>
+#include <xmmintrin.h>
 #if USE_EGTB
 #include "tbcore.c"
 

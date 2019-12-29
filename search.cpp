@@ -1,10 +1,12 @@
 // main search functionality
+#include <cinttypes>
+#include <cstring>
 #include "chess.h"
-#include <intrin.h>
 #include <math.h>
 #include "threads.h"
+#include <xmmintrin.h>
 
-void pass_message_to_GUI(char *);
+void pass_message_to_GUI(const char *);
 
 static const unsigned int tto[]={0,3,3,2};	// node type of other children: PV->CUT, ALL->CUT, CUT->ALL
 static const int piece_value_search[]={0,106,406,449,653,1327,1625,100}; // +69 on 8/1/2017
@@ -17,12 +19,19 @@ int timer_depth;						// depth at which timer is checked
 int see_move(board *,unsigned int,unsigned int);
 static void Qsort(board*,unsigned char*,unsigned int);
 
-static void reduce_history(unsigned int bits,board *b){for(unsigned int i=0;i<sizeof(b->history_count)/sizeof(int);++i) b->history_count[0][i]=b->history_count[0][i]>>bits;}
+static void reduce_history(unsigned int bits,board *b) {
+
+	for(int i = 0; i < 12; i++) {
+		for(int j = 0; j < 64; j++) {
+			b->history_count[i][j] = b->history_count[i][j] >> bits;
+		}
+	}
+}
 
 static UINT64 get_opp_attacks(board *b){
 	static const unsigned int dirs1[2][2]={{7,9},{9,7}};
 	UINT64 opp_attacks,o,a;
-	unsigned long bit;
+	uint32_t bit;
 	unsigned int pll=b->player-1,opp=pll^1;
 
 	a=b->piececolorBB[0][opp];
@@ -271,7 +280,7 @@ static int get_next_move(board *b,unsigned int ply,move_list *m,move *m1,unsigne
 			// MCP cut. This changes node count: late checking moves that were kept and cause cuts will impact history on all prevoius moves. But this removes those moves from the list!
 			if( 
 				( j>=m->MCP_depth1+10 || ( j && j>=m->MCP_depth1-10 && curr_score<-1000000000 ) )	// +4 ELO vs cs<=0
-				&& curr_score <= m->sorted_moves[min(j,m->MCP_depth1)-1].score					// make sure to use defined score!
+				&& curr_score <= m->sorted_moves[std::min(j,m->MCP_depth1)-1].score					// make sure to use defined score!
 				&& (
 					!(to_mask[b->piece[from]&7]&(UINT64(1)<<to)) // no regular checks - estimated (=complete)
 					&& ( !(from_mask&(UINT64(1)<<from)) || !moving_piece_is_pinned(b,from,to,b->player) ) // no discovered checks - estimated or complete
@@ -353,12 +362,12 @@ static void beta_break_threads(unsigned int sp_index){
 #endif
 	board *b;
 	UINT64 a=sp_all[sp_index].slave_bits&~(UINT64(1)<<sp_all[sp_index].sp_created_by_thread); // list of all threads working on this SP
-	unsigned long bit=sp_all[sp_index].sp_created_by_thread;
+	uint32_t bit=sp_all[sp_index].sp_created_by_thread;
 	unsigned int i;
 
 	a&=~(UINT64(1)<<bit);				// excluding the owner
 	sp_all[sp_index].c_0=0;				// no more moves left at this SP
-	InterlockedAnd64((LONG64*)&sp_open_mask,~(UINT64(1)<<sp_index));// count this as closed SP
+	InterlockedAnd64((int64_t*)&sp_open_mask,~(UINT64(1)<<sp_index));// count this as closed SP
 	while( a ){// here "bit" is slave thread index.
 		GET_BIT(a)
 		bbp(bit);b->em_break+=2;			// beta break this thread
@@ -456,7 +465,7 @@ int Msearch(board *b, const int depth, const unsigned int ply, int alp_in, int b
 
 		// loop over previous positions from this search and earlier game
 		UINT64 n1=b->hash_key,n2=n1^player_zorb;
-		for(j=max(96+ply,99);j>ply+99-b->halfmoveclock && b->position_hist[j];--j){// last: 99+ply. Total: halfmoveclock. Also stop on first empty.
+		for(j=std::max(96+ply,99U);j>ply+99-b->halfmoveclock && b->position_hist[j];--j){// last: 99+ply. Total: halfmoveclock. Also stop on first empty.
 			if( b->position_hist[j]==n1 || b->position_hist[j]==n2 )// found a match - return.
 				RET(3,1-2*(ply&1));// Give it +1 cp for top level player to pick repetition draws over waisting time.
 		}
@@ -480,8 +489,8 @@ int Msearch(board *b, const int depth, const unsigned int ply, int alp_in, int b
 	#endif
 
 	// mate-distance pruning
-	alp_in=max(alp_in,-10000+(int)ply);
-	be=min(be,10000-1-(int)ply);
+	alp_in=std::max(alp_in,-10000+(int)ply);
+	be=std::min(be,10000-1-(int)ply);
 	if( alp_in>=be ) RET(10,alp_in);
 
 	// put current position (clean hash) on history list, for repetition draw analysis
@@ -501,8 +510,8 @@ int Msearch(board *b, const int depth, const unsigned int ply, int alp_in, int b
 			if( ply<MAX_MOVE_HIST ) ((short int*)&b->move_hist[ply][ply][0])[0]=((short int*)hd.move)[0]; // record current move.
 			RET(13,hd.be); // fail low
 		}
-		alp_in=max(alp_in,hd.alp);
-		be=min(be,hd.be);
+		alp_in=std::max(alp_in,hd.alp);
+		be=std::min(be,hd.be);
 		assert(alp_in<be);
 	}
 
@@ -510,7 +519,7 @@ int Msearch(board *b, const int depth, const unsigned int ply, int alp_in, int b
 	// use syzygy EG bitbases
 	if( UseEGTBInsideSearch			// i'm alowed to use them
 		&& ply						// skip ply 0 - need valid move
-		&& (i=(unsigned int)popcnt64l(b->colorBB[0]|b->colorBB[1]))<=min(EGTBProbeLimit,MaxCardinality)	// piece count is in the EGBB range
+		&& (i=(unsigned int)popcnt64l(b->colorBB[0]|b->colorBB[1]))<=std::min(EGTBProbeLimit,MaxCardinality)	// piece count is in the EGBB range
 	){
 		// Assume good results (win with +8 material advantage) cannot get better. This reduces disc reads greatly, without impacting results
 		if( node_type==2 && alp_in>=7300 ) RET(14,alp_in);
@@ -628,7 +637,7 @@ int Msearch(board *b, const int depth, const unsigned int ply, int alp_in, int b
 		char sss[100];print_position(sss,b);
 		fprintf(fls,",depth,%d,FEN,%s",depth,sss);
 		#endif
-		InterlockedAnd(&sp_open_mask,0); // init
+		InterlockedAnd64(&sp_open_mask,0); // init
 		b->pl[0].ch_ext=b->pl[0].cum_cap_val=0; // reset starting pl values
 		for(i=0;i<(unsigned int)slave_count;++i) b_s[i].em_break=0;
 		b_m.em_break=0;
@@ -782,7 +791,7 @@ top_of_the_move_loop:// end of top logic, excluded by slave ********************
 			&& ( (node_type==1 && i>0) || node_type==2 || (node_type==3 && i>3) )					// PV after first move, or ALL node. Or CUT node after 3 moves.
 			&& ( ml.moves_generated<2 || ml.mc>5+i )												// number of remaining moves is >5
 			&& !((short int*)m_excl_l)[0]	     													// not in SE search
-			&& depth>=MIN_SLAVE_DEPTH-(popcnt64l(sp_open_mask)<=2?1:0)+(popcnt64l(sp_open_mask)>min(2*Threads+4,MAX_SP_NUM-20)?3:0)+(popcnt64l(sp_open_mask)>min(3*Threads+6,MAX_SP_NUM-10)?3:0) // depth>min
+			&& depth>=MIN_SLAVE_DEPTH-(popcnt64l(sp_open_mask)<=2?1:0)+(popcnt64l(sp_open_mask)>std::min<unsigned>(2*Threads+4,MAX_SP_NUM-20)?3:0)+(popcnt64l(sp_open_mask)>std::min<unsigned>(3*Threads+6,MAX_SP_NUM-10)?3:0) // depth>min
 			&& popcnt64l(sp_all_mask)<MAX_SP_NUM													// there are available split-points
 			&& b->sps_created_num<SPS_CREATED_NUM_MAX
 		){	// save some current info into split-point
@@ -792,20 +801,20 @@ top_of_the_move_loop:// end of top logic, excluded by slave ********************
 			int c1=int(popcnt64l(sp_open_mask)); // i have so many open
 			c1-=(Threads-int(popcnt64l(thread_running_mask))); // i need so many for full utilization
 			// now c1 is excess capacity
-			int dd=min(int(depth0)-3,MIN_SLAVE_DEPTH+max(-1,(c1-2)/2)); // 1/2 reduction in depth
+			int dd=std::min(int(depth0)-3,MIN_SLAVE_DEPTH+std::max(-1,(c1-2)/2)); // 1/2 reduction in depth
 			int i_min=0;
 			unsigned int node_type_max=3,node_type_min=1;
 			if( c1>0 ){ // have at least 0 open* SPs - now only open new SP on ALL node if i>0
 				i_min=1;
 				node_type_max=2; // excl 3
 				node_type_min=2; // excl 1
-				dd=max(dd,MIN_SLAVE_DEPTH+1);
+				dd=std::max(dd,MIN_SLAVE_DEPTH+1);
 			}
 			if( depth>=dd && int(i)>=i_min ){
-			AcquireSRWLockExclusive(&L1); // lock the split-point
+				L1.lock(); // lock the split-point
 			if( !b->em_break && popcnt64l(sp_all_mask)<MAX_SP_NUM && node_type<=node_type_max && node_type>=node_type_min ){// check again - this does come into play! And do not create SP if in break.
 				// select next available sp data structure.
-				DWORD bit;
+				uint32_t bit;
 				BSF64l(&bit,~sp_all_mask);
 				assert(bit<MAX_SP_NUM);
 				sp_index=bit;
@@ -827,7 +836,7 @@ top_of_the_move_loop:// end of top logic, excluded by slave ********************
 				spl->ply=ply;
 				spl->node_type=node_type;
 				spl->c_0=1;										// calc remaining moves
-				InterlockedOr64((LONG64*)&sp_open_mask,(UINT64(1)<<sp_index));// count this as open SP
+				InterlockedOr64((int64_t*)&sp_open_mask,(UINT64(1)<<sp_index));// count this as open SP
 				spl->c_1=0;										// no slaves here so far
 				spl->sp_index=sp_index;
 				spl->master_sleeping=0;							// master is not sleeping
@@ -863,11 +872,11 @@ top_of_the_move_loop:// end of top logic, excluded by slave ********************
 				
 
 
-				ReleaseSRWLockExclusive(&L1);	// release the split-point. It is usually better to release the lock before waking other threads to reduce the number of context switches.
-				if( popcnt64l(thread_running_mask)<Threads ) WakeAllConditionVariable(&CV1);	// start the slaves, only if there are idle slave slots.
+				L1.unlock();	// release the split-point. It is usually better to release the lock before waking other threads to reduce the number of context switches.
+				if( popcnt64l(thread_running_mask)<Threads ) CV1.notify_all();	// start the slaves, only if there are idle slave slots.
 				split_point=2; // now this is a split-point - "master" thread
 			}else
-				ReleaseSRWLockExclusive(&L1);	// release the split-point.	
+				L1.unlock();	// release the split-point.	
 			}
 		}
 		// select the move*********************************************
@@ -879,7 +888,7 @@ top_of_the_move_loop:// end of top logic, excluded by slave ********************
 			if( spl->c_0==0 || spl->bm.alp>=be || !get_next_move(b,ply,spl->mlp,&mo,cm,depth,node_type) ){// end of move list or beta cut-off - break. No need to pass best move/score here - it is always passed in alpha logic.
 				if( spl->c_0 ){
 					spl->c_0=0;					// no more moves
-					InterlockedAnd64((LONG64*)&sp_open_mask,~(UINT64(1)<<sp_index));// count this as closed SP
+					InterlockedAnd64((int64_t*)&sp_open_mask,~(UINT64(1)<<sp_index));// count this as closed SP
 				}
 				spl->lock.release();			// release the split-point
 				break;							// break out of the move loop
@@ -930,8 +939,8 @@ top_of_the_move_loop:// end of top logic, excluded by slave ********************
 			&& mo.score<100							// skip captures/TT. Not excluding killers is a wash.
 			&& !mgc									// exclude checking moves. This is +5 ELO vs only excluding discovered checks. +11 ELO vs not excluding any checks
 		){
-			int LMR1=int(ln[depth]*ln[min(63,i)]*lmr_m[1]+lmr_a[1]);// ln+ln tabulated: baseline
-			new_depth=max(0,depth-LMR1);
+			int LMR1=int(ln[depth]*ln[std::min(63U,i)]*lmr_m[1]+lmr_a[1]);// ln+ln tabulated: baseline
+			new_depth=std::max(0,depth-LMR1);
 			if( new_depth<6 ){
 				j=(((b->piece[mo.from]&7)-1)<<1)+b->player-1; // index
 				int sm=piece_square[0][j][mo.to][0]-piece_square[0][j][mo.from][0]; // mid
@@ -1000,7 +1009,7 @@ top_of_the_move_loop:// end of top logic, excluded by slave ********************
 			&& !in_check											// do not cut check evasions: +2 ELO. 3/2017
 			&& !(d.move_type&5)										// no cuts on promotions or castlings(!&5): +4 ELO. 3/2017
 		){
-			LMR=max(0,int(ln[min(63,depth)]*ln[min(63,i)]*lmr_m[node_type]+lmr_a[node_type]));// ln+ln tabulated: baseline
+			LMR=std::max(0,int(ln[std::min(63,depth)]*ln[std::min(63U,i)]*lmr_m[node_type]+lmr_a[node_type]));// ln+ln tabulated: baseline
 			 
 			// Increase reduction for non-PV nodes when eval is not improving
 			if( LMR && node_type==2 && ply>1 && stand_pat<=b->pl[ply-1].stand_pat )
@@ -1031,7 +1040,7 @@ top_of_the_move_loop:// end of top logic, excluded by slave ********************
 		if( score>bm->best_score ){// record better move/score
 			if( split_point ) spl->lock.acquire(); // lock the split-point
 			if( score>bm->best_score ){// second time, in case better move is found by another thread (it happens!)
-				bm->best_score=score;bm->best_move[0]=mo.from;bm->best_move[1]=mo.to;bm->alp=max(bm->alp,score);// record current move/score/alpha
+				bm->best_score=score;bm->best_move[0]=mo.from;bm->best_move[1]=mo.to;bm->alp=std::max(bm->alp,score);// record current move/score/alpha
 				if( ply<MAX_MOVE_HIST ){
 					b->move_hist[ply][ply][0]=mo.from;b->move_hist[ply][ply][1]=mo.to;
 					for(j=ply+1;j<MAX_MOVE_HIST;++j){
@@ -1046,10 +1055,10 @@ top_of_the_move_loop:// end of top logic, excluded by slave ********************
 				if( split_point && bm->alp>=be ){// SP and beta cut-off
 					if( spl->c_0 ){// beta cut-off. This is already under SP lock
 						spl->c_0=0;		// no more moves.
-						InterlockedAnd64((LONG64*)&sp_open_mask,~(UINT64(1)<<sp_index));// count this as closed SP
+						InterlockedAnd64((int64_t*)&sp_open_mask,~(UINT64(1)<<sp_index));// count this as closed SP
 					}
 					if( spl->c_1 ){ // only break on beta, not alpha. And only if there are helpers.
-						AcquireSRWLockExclusive(&L1);		// lock split-points
+						L1.lock();		// lock split-points
 						if( spl->c_1 && !spl->beta_break ){// do not double-break the same SP! That causes major problems, where beta-break propagates to the root!
 							spl->beta_break=1; // mark this  SP as "broken"
 
@@ -1096,7 +1105,7 @@ top_of_the_move_loop:// end of top logic, excluded by slave ********************
 							#endif		
 							
 						}
-						ReleaseSRWLockExclusive(&L1);	// release the lock
+						L1.unlock();	// release the lock
 					}
 				}
 
@@ -1105,11 +1114,11 @@ top_of_the_move_loop:// end of top logic, excluded by slave ********************
 					g_promotion=d.promotion;// record global promotion for top level search
 					// get total node count
 					UINT64 ncl=b_m.node_count;
-					for(j=0;j<unsigned int(slave_count);++j) ncl+=b_s[j].node_count;
+					for(j=0;j<static_cast<unsigned int>(slave_count);++j) ncl+=b_s[j].node_count;
 					#if ENGINE==0
 					#if TRAIN==0
 					#if ALLOW_LOG
-					fprintf(f_log,"Score,%.2f,Time,%i,Depth,%d x %d,Count,%I64u, Move",score/100.,get_time()-time_start,depth,b->max_ply,ncl);
+					fprintf(f_log,"Score,%.2f,Time,%i,Depth,%d x %d,Count,%" PRIu64 ", Move",score/100.,get_time()-time_start,depth,b->max_ply,ncl);
 					fprintf(f_log,",%c%c%c%c",bm->best_move[0]/8+'a',bm->best_move[0]%8+'1',bm->best_move[1]/8+'a',bm->best_move[1]%8+'1');// always
 					for(j=1;j<min(depth0,MAX_MOVE_HIST) && b->move_hist[0][j-1][0]!=b->move_hist[0][j-1][1] && b->move_hist[0][j][0]+b->move_hist[0][j][1]>0;++j)// get first invalid, unless it is 00.
 						fprintf(f_log,",%c%c%c%c",b->move_hist[0][j][0]/8+'a',b->move_hist[0][j][0]%8+'1',b->move_hist[0][j][1]/8+'a',b->move_hist[0][j][1]%8+'1');
@@ -1124,10 +1133,10 @@ top_of_the_move_loop:// end of top logic, excluded by slave ********************
 						unsigned int c=sprintf(sss,"info depth %u seldepth %u score cp %i",depth,b->max_ply,score);
 						if( score<=alp_in ) c+=sprintf(sss+c," upperbound");
 						else if( score>=be ) c+=sprintf(sss+c," lowerbound");
-						c+=sprintf(sss+c," time %u nodes %I64u nps %I64u tbhits %I64u",te,ncl,(ncl*1000)/max(1,te),tbhits);
+						c+=sprintf(sss+c," time %u nodes %" PRIu64 " nps %" PRIu64 " tbhits %" PRIu64 "",te,ncl,(ncl*1000)/std::max(1,te),tbhits);
 						if( te>1000 ) c+=sprintf(sss+c," hashfull %d",hashfull());
 						c+=sprintf(sss+c," pv %c%c%c%c",bm->best_move[0]/8+'a',bm->best_move[0]%8+'1',bm->best_move[1]/8+'a',bm->best_move[1]%8+'1');
-						for(unsigned int lc1=1;lc1<min(depth0,MAX_MOVE_HIST) && b->move_hist[0][lc1][0]!=b->move_hist[0][lc1][1];++lc1)
+						for(unsigned int lc1=1;lc1<std::min<unsigned>(depth0,MAX_MOVE_HIST) && b->move_hist[0][lc1][0]!=b->move_hist[0][lc1][1];++lc1)
 							c+=sprintf(sss+c," %c%c%c%c",b->move_hist[0][lc1][0]/8+'a',b->move_hist[0][lc1][0]%8+'1',b->move_hist[0][lc1][1]/8+'a',b->move_hist[0][lc1][1]%8+'1');
 						sprintf(sss+c,"\n");
 						pass_message_to_GUI(sss);
@@ -1178,23 +1187,23 @@ top_of_the_move_loop:// end of top logic, excluded by slave ********************
 	if( split_point==1 ){ // slave
 		b->em_break=0; // reset
 		if( b_m.max_ply<b->max_ply ) b_m.max_ply=b->max_ply;					// mass max ply to global master
-		InterlockedExchangeAdd64((LONG64*)&b_m.node_count,b->node_count);		// pass node count from slave to global master
+		InterlockedExchangeAdd64((int64_t*)&b_m.node_count,b->node_count);		// pass node count from slave to global master
 		UINT64 m1=~(UINT64(1)<<b->slave_index0);
 		// add history change to master. Decreases run time around 1%. 12*64=786 int32 elements. 192 128-bit elements.
 		for(unsigned int lc1=0;lc1<sizeof(b_m.history_count)/sizeof(int);lc1+=4) ((__m128i*)&b_m.history_count[0][lc1])[0]=_mm_add_epi32(((__m128i*)&b_m.history_count[0][lc1])[0],_mm_sub_epi32(((__m128i*)&b->history_count[0][lc1])[0],((__m128i*)&spl->b.history_count[0][lc1])[0]));
-		AcquireSRWLockExclusive(&L1);		// lock split-points. Need to lock L1 because global thread_running_mask is modified
+		L1.lock();		// lock split-points. Need to lock L1 because global thread_running_mask is modified
 		assert(spl->c_1>0);
 		assert(spl->c_0==0);
 		spl->c_1--;							// reduce number of slaves working on this sp
 		spl->slave_bits&=m1;				// unassign this thread from this SP
 		thread_running_mask&=m1;			// mark this thread as not running. Has to be under lock.
 		if( spl->c_1==0 && spl->master_sleeping ){
-			WakeConditionVariable(&spl->CVsp);	// all slaves are done with this sp - start the master. If it is sleeping.
+			spl->CVsp.notify_one();	// all slaves are done with this sp - start the master. If it is sleeping.
 			RET(24,1);							// then send slaves to sleep. This helps.
 		}
 		RET(25,0);// slave - skip the hash add/checkmate logic. Returned value is not used. Keep L1 locked
 	}else if( split_point==2 ){// "master": clear the split-point.
-		AcquireSRWLockExclusive(&L1);									// lock split-points
+		std::unique_lock lockedL1(L1); // lock split-points
 		if( spl->c_1 ){// slave(s) are still working on this SP - wait for them to finish.
 			UINT64 m1;
 			if( b->em_break>=2 )// this is beta cut-off: do not start another helper, this will come to an end soon, just wait for it.
@@ -1202,17 +1211,20 @@ top_of_the_move_loop:// end of top logic, excluded by slave ********************
 			else{// no beta cut: other threads may take a while to complete. So start another thread, to keep CPU busy.
 				m1=(UINT64(1)<<b->slave_index0);
 				thread_running_mask&=~m1;								// mark this thread as not running. This allows other slave threads to wake up. Has to be under lock.
-				if( sp_open_mask ) WakeConditionVariable(&CV1);			// wake up 1 slave only. And only if there are open split points.
+				if( sp_open_mask ) CV1.notify_one();			// wake up 1 slave only. And only if there are open split points.
 			}
 			while( spl->c_1 ){
+				using namespace std::chrono_literals;
+
 				spl->master_sleeping=1;
-				if( SleepConditionVariableSRW(&spl->CVsp,&L1,500,0)==FALSE && GetLastError()==ERROR_TIMEOUT ){	// wait for CV and release the lock. When i wake up i have the lock. Limit sleep to 500 msec.
+				if (spl->CVsp.wait_for(lockedL1, 500ms) == std::cv_status::timeout) {
+//				if( SleepConditionVariableSRW(&spl->CVsp,&L1,500,0)==FALSE && GetLastError()==ERROR_TIMEOUT ){	// wait for CV and release the lock. When i wake up i have the lock. Limit sleep to 500 msec.
 					/*#if ALLOW_LOG
 					UINT64 ncl=b_m.node_count;
 					for(j=0;j<unsigned int(slave_count);++j) ncl+=b_s[j].node_count;
 					fprintf(f_log,"timeout during sleep; thread,%d,time,%d,node_count,%I64d,threads running,%d\n",spl->sp_created_by_thread,get_time()-time_start,ncl,int(popcnt64l(thread_running_mask)));
 					#endif*/
-					WakeAllConditionVariable(&CV1);	// timeout - wake all slaves. JIC.
+					CV1.notify_all();	// timeout - wake all slaves. JIC.
 				}
 			}
 			thread_running_mask|=m1;									// mark this thread as running
@@ -1224,7 +1236,7 @@ top_of_the_move_loop:// end of top logic, excluded by slave ********************
 		for(j=ply;j<MAX_MOVE_HIST;++j){b->move_hist[ply][j][0]=spl->move_hist[ply][j][0];b->move_hist[ply][j][1]=spl->move_hist[ply][j][1];}// take move history from split point into board		
 
 		sp_all_mask&=~(UINT64(1)<<sp_index);					// mark this split point "unused". Has to be under lock.
-		InterlockedAnd64((LONG64*)&sp_open_mask,sp_all_mask);	// count this as closed SP
+		InterlockedAnd64((int64_t*)&sp_open_mask,sp_all_mask);	// count this as closed SP
 		b->sps_created_num--; // decrement
 	
 		// log the activity
@@ -1239,7 +1251,6 @@ top_of_the_move_loop:// end of top logic, excluded by slave ********************
 		#endif	
 
 		if( spl->beta_break && b->em_break>=2 ) b->em_break-=2;// reset beta break, only if this is real beta cut. Otherwise, let it stay broken.
-		ReleaseSRWLockExclusive(&L1);	// release the lock
 		b->sp_level--;					// decrease sp level
 	}
 	#if ALLOW_LOG
@@ -1270,7 +1281,7 @@ top_of_the_move_loop:// end of top logic, excluded by slave ********************
 
 int see_move(board *b,unsigned int from,unsigned int cell){// static exchange evaluator version 3 - return score for the player. The move has not been played. This is called 0.63 times per node.
 	UINT64 attackerBB,a,past_attacks,o=b->colorBB[0]|b->colorBB[1],aB,aR,bb,no_from=(~(UINT64(1)<<from));
-	unsigned long int froml;
+	uint32_t froml;
 	unsigned int i,i0,j,d,wi,vi,kpl,pll=(b->player-1)^1; // pll is player after the move is made.
 	int list[32],va,egw=endgame_weight_all_i[b->piece_value];// blend using initial material
 	short int s2[2];
@@ -1378,7 +1389,7 @@ int see_move(board *b,unsigned int from,unsigned int cell){// static exchange ev
 	if( j==1 )
 		return(list[0]);
 	for(;j>2;--j) // go over the exchange list. First entry is at position 0, last one is at position j-1. If there is only 1 move (original one), j=1.
-		list[j-2]=max(0,list[j-2]-list[j-1]);
+		list[j-2]=std::max(0,list[j-2]-list[j-1]);
 	return(list[0]-list[1]);
 }
 
@@ -1450,7 +1461,7 @@ int Qsearch(board *b, unsigned int ply, int alp, int be,int node_type){// Q sear
 		if( stand_pat>=be )// here adding this to TT is -1 ELO
 			return(stand_pat); //  here returning stand pat is +3 ELO. 34% of the time=0.22 times per node.***
 		// this executes 0.41 times per node/0.56 times per call.***
-		alp=max(alp,stand_pat);// improve alpha.
+		alp=std::max(alp,stand_pat);// improve alpha.
 		mc=get_all_attack_moves(b,list);// get all attack moves. This executes 0.40 times per node.*** 2.9 moves on average.
 		if( mc>1 ) Qsort(b,list,mc);
 		//score=0;// for testing only

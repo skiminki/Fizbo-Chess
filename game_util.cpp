@@ -1,6 +1,6 @@
+#include <cstring>
+
 #include "chess.h"
-#include <tchar.h>
-#include <intrin.h>
 #include "threads.h"
 
 // Global Variables:
@@ -18,7 +18,7 @@ int time_start;							// time when search started - for logging only
 unsigned char g_promotion;
 
 extern UINT64 zorb_castle[16];
-_declspec(noinline)  UINT64 get_TT_hash_key(board *b){
+NOINLINE  UINT64 get_TT_hash_key(board *b){
 	UINT64 z;
 	unsigned int i;
 
@@ -36,7 +36,7 @@ _declspec(noinline)  UINT64 get_TT_hash_key(board *b){
 	return(z);
 }
 
-_declspec(noinline)  UINT64 get_pawn_hash_key(board *b){
+NOINLINE  UINT64 get_pawn_hash_key(board *b){
 	UINT64 z=0;
 	unsigned int i;
 
@@ -46,7 +46,7 @@ _declspec(noinline)  UINT64 get_pawn_hash_key(board *b){
 	return(z);
 }
 
-_declspec(noinline)  unsigned int get_mat_key(board *b){
+NOINLINE  unsigned int get_mat_key(board *b){
 	unsigned int wN,bN,wB,bB,wR,bR,wQ,bQ,wP,bP,i;
 
 	wP=(unsigned int)popcnt64l(b->piececolorBB[0][0]);
@@ -64,7 +64,7 @@ _declspec(noinline)  unsigned int get_mat_key(board *b){
 }
 
 #define ACCEPT_SCORE_DIFF 30 // aceptable score difference
-_declspec(noinline) void get_scores(board *b){
+NOINLINE void get_scores(board *b){
 	unsigned int i;
 	int sm=0,se=0;
 
@@ -93,11 +93,11 @@ _declspec(noinline) void get_scores(board *b){
 	}
 }
 
-_declspec(noinline) int get_piece_value(board *b){
+NOINLINE int get_piece_value(board *b){
 	return((int)(3*popcnt64l(b->piececolorBB[1][0]|b->piececolorBB[1][1]|b->piececolorBB[2][0]|b->piececolorBB[2][1])+5*popcnt64l(b->piececolorBB[3][0]|b->piececolorBB[3][1])+10*popcnt64l(b->piececolorBB[4][0]|b->piececolorBB[4][1])));
 }
 
-_declspec(noinline) void set_bitboards(board *b){
+NOINLINE void set_bitboards(board *b){
 	UINT64 one=1;
 	unsigned int i;
 
@@ -118,22 +118,23 @@ _declspec(noinline) void set_bitboards(board *b){
 #ifdef NDEBUG
 #else
 unsigned int bitboards_are_good(board *b){
-	UINT64 bb[6][2],one=1;
-	unsigned int i;
+	UINT64 bb[6][2] { };
+	constexpr uint64_t one = 1;
+	unsigned int i, j;
 
 	// set occupied bitboards locally
-	memset(bb,0,sizeof(bb));//init
 	for(i=0;i<64;++i)
 		if( b->piece[i] )
 			bb[(b->piece[i]&7)-1][b->piece[i]>>7]|=one<<i;
 
 	// compare them to board
 	// all 12
-	for(i=0;i<12;++i)
-		if( bb[0][i]!=b->piececolorBB[0][i] ){
+	for(j = 0; j < 6; ++j)
+	for(i = 0; i < 2; ++i)
+		if( bb[j][i]!=b->piececolorBB[j][i] ){
 			#if ALLOW_LOG
 			char sss[200];print_position(sss,b);
-			fprintf(f_log,"bitboards_are_not_good all 12 %d\n%s\n0x%I64X\n0x%I64X\n",i,sss,bb[0][i],b->piececolorBB[0][i]);
+			fprintf(f_log,"bitboards_are_not_good all 12 %d\n%s\n0x%" PRIx64 "\n0x%" PRIx64 "\n",i,sss,bb[j][i],b->piececolorBB[j][i]);
 			fclose(f_log);f_log=NULL;// close and reset
 			#endif
 			return(0); // bad
@@ -181,7 +182,7 @@ unsigned int boards_are_the_same(board *b1,board *b2,unsigned char from,unsigned
 }
 #endif
 
-void init_board_FEN(char *po,board *b){
+void init_board_FEN(const char *po,board *b){
 	int i,j=0,k;
 	
 	for(i=0;i<64;++i)// clear the board
@@ -303,7 +304,7 @@ void init_board_FEN(char *po,board *b){
 }
 
 static char encode_piece(char c){// encode a piece in FEN
-	static const char white[]="PNBRQK ",black[]="pnbrqk ";
+	static const char white[]="PNBRQK ?",black[]="pnbrqk !";
 	if( (c>>6)==1 )
 		return(white[(c&7)-1]);
 	else
@@ -371,51 +372,9 @@ void solve_prep(board *b){
 	memset(b->move_hist,0,sizeof(b->move_hist));			// clear history
 }
 
-int f_timer(void){// more precise timer
-	static LARGE_INTEGER pf;
-	LARGE_INTEGER pc;
-
-	if( !pf.QuadPart ) QueryPerformanceFrequency(&pf);// init
-	QueryPerformanceCounter(&pc);
-	return(int((pc.QuadPart*1000)/pf.QuadPart));
-}
-
-inline unsigned int f_popcnt64(UINT64 x){// pop count
-	x -=  (x >> 1) & 0x5555555555555555;
-	x  = ((x >> 2) & 0x3333333333333333) + (x & 0x3333333333333333);
-	x  = ((x >> 4) + x) & 0x0F0F0F0F0F0F0F0F;
-	return (x * 0x0101010101010101) >> 56;
-}
-
-unsigned char f_BSF64(unsigned long *ind,unsigned __int64 data){// 64 bit BSF, done in pieces
-	unsigned int i=((unsigned int*)&data)[0];// low 4 bytes
-	
-	if( i )// low 32 bits
-		return(BitScanForward(ind,i));
-	else{// high 32 bits
-		i=((unsigned int*)&data)[1];// high 4 bytes
-		unsigned char x=BitScanForward(ind,i);
-		*ind+=32;
-		return(x);
-	}
-}
-
-unsigned char f_BSR64(unsigned long *ind,unsigned __int64 data){// 64 bit BSR, done in pieces
-	unsigned int i=((unsigned int*)&data)[1];// high 4 bytes
-
-	if( i ){// high 32 bits
-		unsigned char x=BitScanReverse(ind,i);
-		*ind+=32;
-		return(x);
-	}else{// low 32 bits
-		i=((unsigned int*)&data)[0];// low 4 bytes
-		return(BitScanReverse(ind,i));
-	}
-}
-
 void int_m2(void);
 unsigned int init_tablebases(char*);
-__declspec(align(8)) short int adj[43294]={
+alignas(8) short int adj[43294]={
 // 10/15/2017: +64
 92,378,418,553,1122,0,126,468,504,876,1690,0,3,8,-3,7,-3,9,10,36,25,65,55,135,20,15,-2,-52,-50,-24,-7,-13,-40,-95,-99,-59,-10,-1,21,-6,-44,-21,-36,-41,5,15,30,15,24,-29,-52,-27,9,24,43,52,39,3,-83,-52,-35,-9,-14,-44,-61,-60,-47,-32,2,-11,-13,-20,-33,-28,-24,-24,17,14,5,-5,-12,-41,-25,5,17,12,5,-1,-13,-33,-25,-32,-4,-2,-1,-3,-20,-37,-19,2,7,-1,-7,0,-16,-43,-43,7,10,19,11,9,-32,-29,-38,-14,14,37,49,0,-16,-41,1,-32,-11,-18,-9,-9,-15,-17,-7,-4,9,-2,3,-8,-11,1,-5,-18,9,9,9,7,-13,-1,-15,-1,8,11,3,6,10,-4,-30,-33,-34,-13,-17,-14,-2,4,-13,-18,7,3,-6,6,6,4,21,-4,-12,0,-3,7,12,4,17,-13,-5,-10,7,11,21,2,3,-18,-15,-3,4,-6,-11,-1,12,-5,-1,0,-7,-13,-10,1,11,0,1,2,-3,-9,-13,5,10,-3,-6,-5,-10,-15,-9,1,-23,-44,-23,-5,13,0,28,15,-17,-26,-1,16,18,28,15,14,-33,-9,17,14,10,37,-7,16,-22,-7,-5,20,34,21,22,7,-15,-56,-9,-6,-4,-15,-24,-10,-40,-26,-4,5,8,-4,-12,-3,-20,-7,10,23,18,14,-10,8,-17,-8,17,27,22,23,6,3,6,9,-17,2,2,2,2,2,20,17,10,2,2,2,2,2,-48,-9,-6,2,2,2,2,2,-87,-30,-15,2,2,2,2,2,-17,-5,-1,-24,-32,-57,-75,-90,-8,10,20,7,-6,-38,-74,-65,-15,13,23,16,-5,-30,-52,-89,-16,8,18,17,-5,-39,-51,-74,0,-4,-1,-4,-2,6,19,0,0,7,2,-5,-3,3,25,0,0,13,-2,-6,-5,5,28,0,0,6,0,-10,-5,3,19,0,0,1,-1,9,12,10,91,0,0,1,-4,3,6,9,105,0,0,-2,-4,-4,-4,-9,
 98,0,0,0,-7,-11,-9,-16,80,0,-6,-4,1,3,19,16,37,29,54,70,-35,-88,-14,-35,-5,-18,-1,-3,1,2,3,7,4,6,2,4,-4,-1,-18,-47,-9,-20,-4,-15,-2,-5,0,1,2,4,3,6,4,6,5,6,6,5,3,3,6,1,-3,4,18,0,-17,-71,-10,-40,-8,-24,-6,-12,-4,-5,-3,1,-1,5,1,7,4,9,7,10,14,12,16,14,21,15,35,12,23,11,-35,-160,-14,-67,-6,-39,-4,-19,-2,-9,-2,-2,-2,6,-1,7,0,11,2,10,2,12,6,11,9,8,13,7,20,3,37,-4,38,-9,44,-14,71,-22,64,-22,31,-14,38,-22,38,-22,38,-22,38,-22,38,-22,38,-22,38,-22,9,-5,0,0,6,15,18,0,9,21,21,0,0,0,0,20,45,-2,0,43,44,13,13,17,-10,-10,-10,-10,-10,-11,-11,-12,-10,-9,-8,-7,-6,-2,1,4,8,12,15,19,22,26,30,35,41,46,52,58,63,68,74,79,85,91,98,104,111,118,126,134,142,150,159,171,183,195,207,219,235,251,267,283,299,307,316,324,333,342,350,358,366,429,27,55,45,19,30,35,48,26,22,21,43,21,-19,5,38,41,214,42,9,39,22,12,16,29,-6,4,44,50,-32,6,46,35,-27,-2,18,15,-12,-7,7,0,107,55,26,9,11,7,-56,22,-36,-63,-15,-39,-19,-48,26,-38,3,4,13,13,-11,4,-12,5,-38,-3,-49,-17,-17,-10,-8,-2,-1,-3,-1,3,-23,1,-30,19,-12,-3,1,-4,6,4,5,0,-6,6,-50,19,-5,-10,0,1,6,5,9,3,3,7,-37,17,0,9,7,8,1,11,12,16,-3,12,-16,11,6,13,4,17,13,16,12,11,7,13,-4,14,7,14,3,14,5,13,14,14,3,16,2,31,-33,-57,-10,-50,-15,-36,-11,-36,15,6,7,4,5,4,-6,5,-26,16,-80,34,-9,-4,
@@ -681,14 +640,14 @@ void init_all(unsigned int mode){// mode=1 is for training only: pass adj[] into
 
 	
 		// init thread objects
-		InitializeSRWLock(&L1);													// lock on split-points
-		InitializeConditionVariable(&CV1);										// slave is allowed to run
+		// InitializeSRWLock(&L1);													// lock on split-points
+		// InitializeConditionVariable(&CV1);										// slave is allowed to run
 		sp_all=(split_point_type*)malloc(sizeof(split_point_type)*MAX_SP_NUM);	// all split-points; allocate MAX_SP_NUM slots
 		if( sp_all==NULL ) exit(123);
 		memset(sp_all,0,sizeof(split_point_type)*MAX_SP_NUM);
 		for(i=0;i<MAX_SP_NUM;++i){
 			sp_all[i].lock.release();						// release the lock on split-point
-			InitializeConditionVariable(&sp_all[i].CVsp);	// sp is finished, wake up master
+			// InitializeConditionVariable(&sp_all[i].CVsp);	// sp is finished, wake up master
 		}
 		init_threads(Threads-1);												// init threads.
 	}

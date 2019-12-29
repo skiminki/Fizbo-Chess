@@ -1,6 +1,8 @@
 // PDEP move generation (used to be magic, but PDEP is better).
+#include <cstdlib>
+#include <cstring>
+
 #include "chess.h"
-#include <intrin.h>
 
 extern UINT64 *mem;
 

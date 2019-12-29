@@ -1,6 +1,9 @@
+
+#include <cinttypes>
+#include <cstring>
+#include <thread>
+
 #include "chess.h"
-#include <tchar.h>
-#include <intrin.h>
 #include "threads.h"
 
 // Globals
@@ -9,9 +12,7 @@ FILE *f_log; // main log file. Always open. Closed/reopened when solver is calle
 #endif
 
 // Statics
-static HANDLE calculate_h;				// calculation thread handle
-static HANDLE hStdin;					// std in handle
-static HANDLE hStdout;					// std out handle
+static std::thread calculate_h;				// calculation thread handle
 static int time_per_move_base;			// in milliseconds
 static int time_per_move;				// incremental time per move, in milliseconds
 static unsigned int halfmovemade;		// number of hm's from start of the game
@@ -39,11 +40,10 @@ void init_board(unsigned int mode,board *b){// init to starting board
 	clear_hash(1);										// clear hash
 }
 
-void pass_message_to_GUI(char *sss){// pass message to GUI, and log it.
-	DWORD c;
+void pass_message_to_GUI(const char *sss){// pass message to GUI, and log it.
 
 	// pass command to GUI
-	WriteFile(hStdout,sss,(DWORD)strlen(sss),&c,NULL);
+	printf("%s", sss);
 
 	// and log it
 	#if ALLOW_LOG
@@ -51,7 +51,7 @@ void pass_message_to_GUI(char *sss){// pass message to GUI, and log it.
 	#endif
 }
 
-static _declspec(noinline) unsigned int legal_move_count(board *b,unsigned char *list){// return legal move count. And move list.
+static NOINLINE unsigned int legal_move_count(board *b,unsigned char *list){// return legal move count. And move list.
 	unsigned int i,mc,mc2;
 	int in_check;
 
@@ -79,7 +79,7 @@ static _declspec(noinline) unsigned int legal_move_count(board *b,unsigned char 
 	return(mc);
 }
 
-static _declspec(noinline) unsigned int try_ponder(char *sss,board *b,unsigned char from,unsigned char to){// look in the hash for ponder move. Make sure it is legal. It it is, print it
+static NOINLINE unsigned int try_ponder(char *sss,board *b,unsigned char from,unsigned char to){// look in the hash for ponder move. Make sure it is legal. It it is, print it
 	unmake d;
 	hash_data hd;
 	unsigned int c=0;
@@ -108,7 +108,7 @@ static _declspec(noinline) unsigned int try_ponder(char *sss,board *b,unsigned c
 int see_move(board *,unsigned int,unsigned int);
 void delete_hash_entry(board*);
 extern unsigned int MaxCardinality;
-static DWORD WINAPI calculate_f(LPVOID p_unused){// calculation function
+static uint32_t calculate_f(void *p_unused){// calculation function
 	board *b=&b_m;
 	int t2,a,be,t_min,t_max,score,i,last_score=MIN_SCORE,last_score2=MIN_SCORE;// init last score(s) to MIN_SCORE
 	unsigned char last_move[4],mm[4];
@@ -168,7 +168,7 @@ static DWORD WINAPI calculate_f(LPVOID p_unused){// calculation function
 		}
 	}else{// here i need brackets!
 		#if ALLOW_LOG
-		fprintf(f_log,"TT miss. TT data is: depth=%d,alp=%d,be=%d,move:%c%c%c%c\n",hd.depth,max(hd.alp,MIN_SCORE+1),min(MAX_SCORE-1,hd.be),'a'+hd.move[0]/8,'1'+hd.move[0]%8,'a'+hd.move[1]/8,'1'+hd.move[1]%8);
+		fprintf(f_log,"TT miss. TT data is: depth=%d,alp=%d,be=%d,move:%c%c%c%c\n",hd.depth,std::max(hd.alp,MIN_SCORE+1),std::min(MAX_SCORE-1,hd.be),'a'+hd.move[0]/8,'1'+hd.move[0]%8,'a'+hd.move[1]/8,'1'+hd.move[1]%8);
 		#endif
 	}
 
@@ -220,17 +220,17 @@ static DWORD WINAPI calculate_f(LPVOID p_unused){// calculation function
 	if( pondering_allowed ) t_min_factor=1.5f;// increase time if pondering is allowed - to acccount for ponder hits
 	if( moves_remaining==0 ){// Incremental time clock - ICS style.
 		float max_time_mult=3.0f;// max time is this times min time.
-		int mr=45-min(60,halfmovemade)/2;// Assume 45-hm/2, min 15 moves left.
-		t_min=time_per_move+int((max(20,my_time-time_per_move-time_margin))/t_min_factor/mr); // X msec margin
+		int mr=45-std::min(60U,halfmovemade)/2;// Assume 45-hm/2, min 15 moves left.
+		t_min=time_per_move+int((std::max(20,my_time-time_per_move-time_margin))/t_min_factor/mr); // X msec margin
 		t_max=int(t_min*max_time_mult);
 	}else{
 		float max_time_mult=5.5f; // max time is this times min time.
-		t_min=int(max(20,my_time)/t_min_factor/moves_remaining);
-		t_max=(int)min(t_min*max_time_mult,my_time-time_margin-(time_per_move_base*(moves_remaining-1))/4);// timeout: smaller of X*t_min, remaining time-X msec, 1/4 base time for all remaining moves
+		t_min=int(std::max(20,my_time)/t_min_factor/moves_remaining);
+		t_max=std::min<int>(t_min*max_time_mult,my_time-time_margin-(time_per_move_base*(moves_remaining-1))/4);// timeout: smaller of X*t_min, remaining time-X msec, 1/4 base time for all remaining moves
 	}
-	t_max=min(t_max,my_time-time_margin);// overall cap at remaining time minus margin
-	t_max=max(t_max,10); // but no less than 10 msec
-	t_min=min(t_min,t_max); // min canot exceed max
+	t_max=std::min(t_max,my_time-time_margin);// overall cap at remaining time minus margin
+	t_max=std::max(t_max,10); // but no less than 10 msec
+	t_min=std::min(t_min,t_max); // min canot exceed max
 	#if ALLOW_LOG
 	fprintf(f_log,"moves remaining:%d. Min time: %d msec. Max time: %d msec. Standard move time: %d msec.\n",moves_remaining,t_min,t_max,time_per_move_base);
 	print_position(sss,b);
@@ -245,7 +245,7 @@ static DWORD WINAPI calculate_f(LPVOID p_unused){// calculation function
 		depth0=i;
 		timeout_complete_l=timeout_l=time_start+t_max;		// starts from beginning of solve!
 		t2=get_time();
-		timeout_l=t2+max(0,timeout_l-t2)/2;	// cut remaining time by half for searching first move. No impact on ELO.
+		timeout_l=t2+std::max(0,timeout_l-t2)/2;	// cut remaining time by half for searching first move. No impact on ELO.
 		
 		// only apply timeout if not pondering
 		if( !ponder ){
@@ -262,7 +262,7 @@ static DWORD WINAPI calculate_f(LPVOID p_unused){// calculation function
 			b_m.node_count=1; // to avoid zero
 			// pass this to GUI
 			// second move is always invalid - do not pass it
-			sprintf(sss,"info depth %u score cp %i time %u nodes %I64u pv %c%c%c%c\n",i,score,0,b_m.node_count,b->move_hist[0][0][0]/8+'a',b->move_hist[0][0][0]%8+'1',b->move_hist[0][0][1]/8+'a',b->move_hist[0][0][1]%8+'1');
+			sprintf(sss,"info depth %u score cp %i time %u nodes %" PRIu64 " pv %c%c%c%c\n",i,score,0,b_m.node_count,b->move_hist[0][0][0]/8+'a',b->move_hist[0][0][0]%8+'1',b->move_hist[0][0][1]/8+'a',b->move_hist[0][0][1]%8+'1');
 			pass_message_to_GUI(sss);
 		}else{
 			// get aspiration window
@@ -275,7 +275,7 @@ static DWORD WINAPI calculate_f(LPVOID p_unused){// calculation function
 				if( abs(last_score)>500 )
 					w+=(abs(last_score)-500)/4; // grade by score: +0 for +-500, +100 for +-900
 				if( depth0>9 )
-					w-=4*min(5,depth0-9); // reduce window by 20 for d=14+.
+					w-=4*std::min<unsigned>(5,depth0-9); // reduce window by 20 for d=14+.
 				a=last_score-w;
 				be=last_score+w;
 			}
@@ -293,7 +293,7 @@ static DWORD WINAPI calculate_f(LPVOID p_unused){// calculation function
 					#endif
 					b->move_hist[0][0][0]=b->move_hist[0][0][1]=0;
 					// increase the window - by a factor of 2.
-					w*=2;a=max(MIN_SCORE,score-w);be=min(MAX_SCORE,score+w);
+					w*=2;a=std::max(MIN_SCORE,score-w);be=std::min(MAX_SCORE,score+w);
 				}else if( score>=be ){// fail high - keep the move.
 					// save current move and score. +4 ELO.
 					if( move_is_legal(b,b->move_hist[0][0][0],b->move_hist[0][0][1]) ){// check if current move is legal - it is.
@@ -310,7 +310,7 @@ static DWORD WINAPI calculate_f(LPVOID p_unused){// calculation function
 						((unsigned int*)&last_move[0])[0]=((unsigned int*)&b->move_hist[0][0][0])[0];
 					}
 					// increase the window - by a factor of 2.
-					w*=2;a=max(MIN_SCORE,score-w);be=min(MAX_SCORE,score+w);
+					w*=2;a=std::max(MIN_SCORE,score-w);be=std::min(MAX_SCORE,score+w);
 				}else
 					break;
 			}while( !b->em_break );
@@ -368,15 +368,15 @@ static DWORD WINAPI calculate_f(LPVOID p_unused){// calculation function
 		fprintf(f_log,"Sleeping in ponder thread...\n");
 		fclose(f_log);f_log=fopen(LOG_FILE1,"a");
 		#endif
-		Sleep(20);
+		sleepMs(20);
 	}
 
 	// pass final search stats to the GUI
 	int te=get_time()-time_start; // elapsed time
-	unsigned int c=sprintf(sss,"info depth %u seldepth %u score cp %i time %u nodes %I64u nps %I64u tbhits %I64u",depth0,b_m.max_ply,score,te,b_m.node_count,(b_m.node_count*1000)/max(1,te),tbhits);
+	unsigned int c=sprintf(sss,"info depth %u seldepth %u score cp %i time %u nodes %" PRIu64 " nps %" PRIu64 " tbhits %" PRIu64,depth0,b_m.max_ply,score,te,b_m.node_count,(b_m.node_count*1000)/std::max(1,te),tbhits);
 	if( te>1000 ) c+=sprintf(sss+c," hashfull %d",hashfull());
 	c+=sprintf(sss+c," pv %c%c%c%c",mm[0]/8+'a',mm[0]%8+'1',mm[1]/8+'a',mm[1]%8+'1');
-	for(unsigned int lc1=1;lc1<min(depth0,MAX_MOVE_HIST) && b->move_hist[0][lc1][0]!=b->move_hist[0][lc1][1];++lc1)
+	for(unsigned int lc1=1;lc1<std::min<unsigned>(depth0,MAX_MOVE_HIST) && b->move_hist[0][lc1][0]!=b->move_hist[0][lc1][1];++lc1)
 		c+=sprintf(sss+c," %c%c%c%c",b->move_hist[0][lc1][0]/8+'a',b->move_hist[0][lc1][0]%8+'1',b->move_hist[0][lc1][1]/8+'a',b->move_hist[0][lc1][1]%8+'1');
 	sprintf(sss+c,"\n");
 	pass_message_to_GUI(sss);
@@ -396,31 +396,27 @@ static DWORD WINAPI calculate_f(LPVOID p_unused){// calculation function
 	return(0);
 }
 
-static unsigned int str_comp(char *input,char * command){
+static unsigned int str_comp(const char *input, const char * command){
 	unsigned int i;
-	for(i=0;i<strlen(command);++i)
+	size_t cmdLen = strlen(command);
+	for(unsigned i=0;i<cmdLen;++i)
 		if( input[i]!=command[i] )
 			return(0);
 	return(1);
 }
 
-static _declspec(noinline) void stop_th(void){// stop pondering thread
-	if( calculate_h!=NULL ){
+static NOINLINE void stop_th(void){// stop pondering thread
+	if( calculate_h.joinable() ){
 		int tol=get_time()-1000;
-		DWORD ret1;
+		uint32_t ret1;
 		do{
 			timer_depth=0;
 			timeout_complete=timeout=tol; // set timeout to "in the past"
 			// break all slaves. And master.
 			b_m.em_break=1;
 			for(unsigned int i=0;i<(unsigned int)slave_count;++i) b_s[i].em_break=1;
-			ret1=WaitForSingleObject(calculate_h,100);// wait for thread to terminate. Put a time limit here - 0.1 seconds
-			#if ALLOW_LOG
-			if( ret1==WAIT_TIMEOUT ) fprintf(f_log,"Problem: closing calculation thread...\n");
-			#endif
-		}while( ret1==WAIT_TIMEOUT );
-		CloseHandle(calculate_h);
-		calculate_h=NULL;
+			calculate_h.join();// wait for thread to terminate
+		}while(false);
 		#if ALLOW_LOG
 		fprintf(f_log,"  Calculation thread stopped.\n");
 		#endif
@@ -428,36 +424,61 @@ static _declspec(noinline) void stop_th(void){// stop pondering thread
 }
 
 unsigned int init_tablebases(char*);
-int _cdecl _tmain(int argc, _TCHAR* argv[]){
-	char *input=(char *)malloc(1024*16);			// input buffer
+
+int main(int argc, char **argv) {
+
+	char *input = nullptr;
 	UINT64 *hash_history=(UINT64*)malloc(1200*8);	// history of all hashes in the current game.
 	board b_l;										// local board
 	unsigned int i,j,k,l,offset;
 	int base_moves=0;
-	DWORD read_counter;
 	char sss[300];
-	
-	setbuf(stdout, NULL);
-    setbuf(stdin, NULL);
-    setvbuf(stdout, NULL, _IONBF, 0);
-    setvbuf(stdin, NULL, _IONBF, 0);
-	hStdin=GetStdHandle(STD_INPUT_HANDLE);	// get stdin handle
-	hStdout=GetStdHandle(STD_OUTPUT_HANDLE);// get stdout handle
-	#if ALLOW_LOG
-	f_log=fopen(LOG_FILE1,"a");// open main log file. Keep it open. Append.
-	#endif
+
+#if ALLOW_LOG
+	f_log=fopen(LOG_FILE1,"w");// open main log file. Keep it open. Rewrite.
+#endif
+
 	init_all(0);								// perform initializations
 	while(1){// start of main - infinite - loop ***************************************************************************
-		unsigned int rr=ReadFile(hStdin,input,1024*16-1,&read_counter,NULL);
-		if( input[read_counter]==13 || input[read_counter]==10 ) // skip one new line
-			read_counter--;
-		input[read_counter]=0; // terminate the string
+
+		if (input) {
+			free(input);
+			input = nullptr;
+		}
+		size_t inputBufSize = 0;
+		ssize_t inputStringLen = getline(&input, &inputBufSize, stdin);
+
+		if (inputStringLen < 0) {
+			perror("Failed to read from input!");
+			abort();
+		}
+
+		// trim from the end
+		while (inputStringLen > 0) {
+			bool doneTrimming = false;
+			switch (input[inputStringLen - 1]) {
+				case ' ':
+				case '\n':
+				case '\r':
+					input[--inputStringLen] = 0;
+					break;
+
+				default:
+					doneTrimming = true;
+			}
+			if (doneTrimming)
+				break;
+		}
+
+		// empty line?
+		if (inputStringLen == 0)
+			continue;
 
 		// parse input string
 		offset=0;// start parsing from the start
 		while( input[offset]==10 || input[offset]==13 || input[offset]==' ' )// skip blanks
 			offset++;
-		if(read_counter<=offset)// skip if only input is "\n"
+		if(inputStringLen<=offset)// skip if only input is "\n"
 			continue;
 
 		#if ALLOW_LOG
@@ -546,7 +567,7 @@ int _cdecl _tmain(int argc, _TCHAR* argv[]){
 						i=i*10+input[offset]-'0';
 						offset++;
 					}
-					Threads=min(56,max(1,i)); // apply min and max
+					Threads=std::min(56U,std::max(1U,i)); // apply min and max
 					init_threads(Threads-1);
 					#if ALLOW_LOG
 					fprintf(f_log,"    [DO]use %u cores\n",i);
@@ -560,12 +581,12 @@ int _cdecl _tmain(int argc, _TCHAR* argv[]){
 						offset++;
 					}
 					i=i+(i>>2);// increase by 25%, just in case
-					i=min(65536,max(1,i)); // apply min and max
+					i=std::min(65536U,std::max(1U,i)); // apply min and max
 					UINT64 ii=i;
 					ii=ii*1024;
 					ii=ii*1024;
 					ii=ii/sizeof(hash); // this approach (step by step) allows 4Gb or more to be used
-					DWORD bit;
+					uint32_t bit;
 					BSR64l(&bit,ii);
 					HBITS=bit;
 					init_hash();
@@ -803,8 +824,8 @@ int _cdecl _tmain(int argc, _TCHAR* argv[]){
 
 				// put previous game positions on position_hist, starting with 99. Only include repeated positions!
 				if( halfmovemade ){
-					for(k=i=0;i<=min(halfmovemade-1,b_m.halfmoveclock);++i){
-						for(j=i+1;j<=min(halfmovemade-1,b_m.halfmoveclock);++j)
+					for(k=i=0;i<=std::min<unsigned>(halfmovemade-1,b_m.halfmoveclock);++i){
+						for(j=i+1;j<=std::min<unsigned>(halfmovemade-1,b_m.halfmoveclock);++j)
 							if( hash_history[halfmovemade-1-j]==hash_history[halfmovemade-1-i] ){
 								b_m.position_hist[99-k]=hash_history[halfmovemade-1-i];
 								k++;
@@ -823,18 +844,18 @@ int _cdecl _tmain(int argc, _TCHAR* argv[]){
 
 				// call the solver
 				TTage=(TTage+1)&3; // increment TT age before the solve.
-				if( calculate_h!=NULL ){
-					CloseHandle(calculate_h);
-					calculate_h=NULL;
-				}
-				calculate_h=CreateThread(NULL,0,calculate_f,0,0,NULL);//sec.attr., stack, function, param,flags, thread id
+				calculate_h = std::thread(calculate_f, nullptr);//sec.attr., stack, function, param,flags, thread id
 				// end of "go" logic
 			}else{
+				if (offset != inputStringLen) {
+					char buf[256];
+					snprintf(buf, sizeof buf, "Unknown command: '%s'\n", input + offset);
+					pass_message_to_GUI(buf);
+				}
 				#if ALLOW_LOG
 				fprintf(f_log,"unrecognized command - ignore. Command is:%s\n",input+offset);
 				#endif
-				while( input[offset]!=10 && input[offset]!=13 && input[offset]!=' ' && input[offset]!=0 ) // skip unrecognized command
-					offset++;
+				break; // skip unrecognized command
 			}
 
 			// skip CR and new line
@@ -846,7 +867,7 @@ int _cdecl _tmain(int argc, _TCHAR* argv[]){
 			fclose(f_log);
 			f_log=fopen(LOG_FILE1,"a");
 			#endif
-		}while(read_counter>offset);
+		} while(inputBufSize>offset);
 	}// end of infinite loop
 	return(0);
 }

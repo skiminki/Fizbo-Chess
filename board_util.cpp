@@ -1,6 +1,10 @@
 // board utilities
 #include "chess.h"
-#include <intrin.h>
+
+#include <algorithm>
+#include <cstdlib>
+#include <cstring>
+
 #define USE_PREFETCH 1
 
 extern UINT64 *eh; // eval hash pointer
@@ -62,7 +66,7 @@ void init_moves(void){
 	memset(dir_norm,0,sizeof(dir_norm));// init to "not valid direction"=0
 	for(i=0;i<64;++i)
 		for(j=0;j<64;++j){
-			dist[i][j]=max(abs(((int)i>>3)-((int)j>>3)),abs(((int)i&7)-((int)j&7)));// distance
+			dist[i][j]=std::max(abs(((int)i>>3)-((int)j>>3)),abs(((int)i&7)-((int)j&7)));// distance
 			if( i==j )// skip same to same attack - it is not real.
 				continue;
 			int x1=i%8,x2=j%8,y1=i/8,y2=j/8;
@@ -173,7 +177,7 @@ static inline void set_piece(board *b,unsigned int cell,unsigned int piece){// s
 static inline unsigned int get_knight_moves(board *b,unsigned char *list,unsigned char player,unsigned int cell,UINT64 allowed_mask){
 	UINT64 attack_mask=knight_masks[cell]&allowed_mask;
 	unsigned int mc=0;
-	while( attack_mask ){unsigned long bit;
+	while( attack_mask ){uint32_t bit;
 		GET_BIT(attack_mask)
 		list[0]=cell;list[1]=(unsigned char)bit;mc++;list+=2;
 	}
@@ -183,7 +187,7 @@ static inline unsigned int get_knight_moves(board *b,unsigned char *list,unsigne
 static inline unsigned int get_bishop_moves(board *b,unsigned char *list,unsigned char player,unsigned int cell,UINT64 o,UINT64 allowed_mask){
 	UINT64 attack_mask=attacks_bb_B(cell,o)&allowed_mask;
 	unsigned int mc=0;
-	while( attack_mask ){unsigned long bit;
+	while( attack_mask ){uint32_t bit;
 		GET_BIT(attack_mask)
 		list[0]=cell;list[1]=(unsigned char)bit;mc++;list+=2;
 	}
@@ -193,7 +197,7 @@ static inline unsigned int get_bishop_moves(board *b,unsigned char *list,unsigne
 static inline unsigned int get_rook_moves(board *b,unsigned char *list,unsigned char player,unsigned int cell,UINT64 o,UINT64 allowed_mask){
 	UINT64 attack_mask=attacks_bb_R(cell,o)&allowed_mask;
 	unsigned int mc=0;
-	while( attack_mask ){unsigned long bit;
+	while( attack_mask ){uint32_t bit;
 		GET_BIT(attack_mask)
 		list[0]=cell;list[1]=(unsigned char)bit;mc++;list+=2;
 	}
@@ -203,7 +207,7 @@ static inline unsigned int get_rook_moves(board *b,unsigned char *list,unsigned 
 static inline unsigned int get_queen_moves(board *b,unsigned char *list,unsigned char player,unsigned int cell,UINT64 o,UINT64 allowed_mask){
 	UINT64 attack_mask=(attacks_bb_R(cell,o)|attacks_bb_B(cell,o))&allowed_mask;
 	unsigned int mc=0;
-	while( attack_mask ){unsigned long bit;
+	while( attack_mask ){uint32_t bit;
 		GET_BIT(attack_mask)
 		list[0]=cell;list[1]=(unsigned char)bit;mc++;list+=2;
 	}
@@ -223,7 +227,7 @@ static inline unsigned int get_king_moves_l(board *b,unsigned char *list,unsigne
 	p_a|=king_masks[b->kp[2-player]];// eliminate cells attacked by opp king
 	attack_mask=king_masks[cell]&(~p_a);
 
-	unsigned long bit;
+	uint32_t bit;
 	unsigned int mc=0;
 	while( attack_mask ){
 		GET_BIT(attack_mask)
@@ -265,7 +269,7 @@ static inline unsigned int get_king_moves_l_no_captures(board *b,unsigned char *
 	p_a|=king_masks[b->kp[2-player]];// eliminate cells attacked by opp king
 	attack_mask=king_masks[cell]&(~p_a)&(~b->colorBB[2-player]); // eliminate cells occupied by opponent
 
-	unsigned long bit;
+	uint32_t bit;
 	unsigned int mc=0;
 	while( attack_mask ){
 		GET_BIT(attack_mask)
@@ -355,7 +359,7 @@ static unsigned int get_ep_moves_l(board *b,unsigned char *list,unsigned char pl
 
 unsigned int get_all_moves_new_part1(board *b,unsigned char *list,UINT64 *pinBB_r){// get list of all available moves - captures and promotions only. Return count. Put moves on the list.
 	UINT64 move_count=0,j,mc1,pinBB=0,pinned_pawns=0,one=1,a,a2,o=b->colorBB[0]|b->colorBB[1],allowed_mask=b->colorBB[2-b->player];// only opp cell are allowed
-	unsigned long bit;
+	uint32_t bit;
 	unsigned int king_position=b->kp[b->player-1],p_c=0,p_cell[8],p_d[8],player=b->player;
 	unsigned char p_d2[64];// for each cell, direction of allowed moves: 1,7,8,9. 0 if all allowed.
 
@@ -612,12 +616,12 @@ unsigned int get_all_moves_new_part1(board *b,unsigned char *list,UINT64 *pinBB_
 			list[0]=b->kp[player-1];list[1]=(unsigned char)bit;move_count++;list+=2;
 		}
 	}
-	return(unsigned int(move_count));// return move count
+	return static_cast<unsigned int>(move_count);// return move count
 }
 
 unsigned int get_all_moves_new_part2(board *b,unsigned char *list,UINT64 pinBB){// get list of all available moves - excluding captures and promotions. Return count. Put moves on the list.
 	UINT64 move_count=0,mc1,pinned_pawns=0,one=1,a,a2,o=b->colorBB[0]|b->colorBB[1],allowed_mask=~o; // only empties are allowed
-	unsigned long bit;
+	uint32_t bit;
 	unsigned int king_position=b->kp[b->player-1],j,p_c=0,p_cell[8],p_d[8],player=b->player;
 	unsigned char p_d2[64];// for each cell, direction of allowed moves: 1,7,8,9. 0 if all allowed.
 
@@ -800,7 +804,7 @@ unsigned int get_all_moves_new_part2(board *b,unsigned char *list,UINT64 pinBB){
 	mc1=get_king_moves_l_no_captures(b,list,player,king_position);
 	move_count+=mc1;
 	list+=(mc1<<1);// move up the list pointer
-	return(unsigned int(move_count));// return move count
+	return static_cast<unsigned int>(move_count);// return move count
 }
 
 unsigned int get_all_moves(board *b,unsigned char *list){// get list of all available moves. Return count. Put moves on the list.
@@ -812,7 +816,7 @@ unsigned int get_all_moves(board *b,unsigned char *list){// get list of all avai
 
 unsigned int get_all_attack_moves(board *b,unsigned char *list){// get list of all attack moves. Return count. Put moves on the list. Order is different: now pinned and unpinned pawn moves are together!
 	UINT64 move_count=0,mc1,a,a2,o=b->colorBB[0]|b->colorBB[1],allowed_mask=b->colorBB[2-b->player];
-	unsigned long bit;
+	uint32_t bit;
 	unsigned int player=b->player;
 
 
@@ -929,12 +933,12 @@ unsigned int get_all_attack_moves(board *b,unsigned char *list){// get list of a
 		move_count+=mc1;// count
 		list+=(mc1<<1);// move up the list pointer
 	}
-	return(unsigned int(move_count));// return move count
+	return static_cast<unsigned int>(move_count);// return move count
 }
 
 static unsigned int get_all_nonking_moves_to_cell(board *b,unsigned char *list,unsigned int cell,unsigned int capture){
 	UINT64 bb;
-	unsigned long bit;
+	uint32_t bit;
 	unsigned int mc=0,player0=b->player-1;
 
 	// pawns
@@ -1045,7 +1049,7 @@ unsigned int get_out_of_check_moves(board *b,unsigned char *list,unsigned int k_
 			break;}
 		default:assert(false);break;
 	}
-	while( attack_mask ){unsigned long bit;
+	while( attack_mask ){uint32_t bit;
 		GET_BIT(attack_mask)
 		list[2*mc]=k_cell;list[2*mc+1]=(unsigned char)bit;mc++;
 	}
@@ -1084,7 +1088,7 @@ void unmake_null_move(board *b){// null move: change player, score and TT hash k
 void make_null_move(board *b){// null move: change player, score and TT hash key
 	unmake_null_move(b);
 	#if USE_PREFETCH
-	_mm_prefetch((const char*)&h[get_hash_index],_MM_HINT_T0); // prefetch the main hash
+	data_prefetch((const char*)&h[get_hash_index]); // prefetch the main hash
 	#endif
 }
 
@@ -1113,8 +1117,8 @@ void make_move(board *b,unsigned char from,unsigned char to,unmake *d){// make a
 	if( !w ){// no capture - prefetch now!
 		b->hash_key^=z^player_zorb;	// flip player;
 		#if USE_PREFETCH
-		_mm_prefetch((const char*)&h[get_hash_index],_MM_HINT_T0); // prefetch the main hash
-		_mm_prefetch((const char*)&eh[get_eval_hash_index],_MM_HINT_T0); // prefetch eval hash
+		data_prefetch((const char*)&h[get_hash_index]); // prefetch the main hash
+		data_prefetch((const char*)&eh[get_eval_hash_index]); // prefetch eval hash
 		#endif
 	}
 
@@ -1140,8 +1144,8 @@ void make_move(board *b,unsigned char from,unsigned char to,unmake *d){// make a
 		UINT64 zz=zorb[0][wi][to];
 		b->hash_key^=z^player_zorb^zz;				// update Z key for "to", old. Only for captures. Here piece is never empty!. flip player;
 		#if USE_PREFETCH
-		_mm_prefetch((const char*)&h[get_hash_index],_MM_HINT_T0); // prefetch the main hash
-		_mm_prefetch((const char*)&eh[get_eval_hash_index],_MM_HINT_T0); // prefetch eval hash
+		data_prefetch((const char*)&h[get_hash_index]); // prefetch the main hash
+		data_prefetch((const char*)&eh[get_eval_hash_index]); // prefetch eval hash
 		#endif
 		zp=(v&7)==1?z:0;							// Zp=Z, if pawn move. This has to be before application of "wi".
 		zp^=(w&7)==1?zz:0;							// update Zp key for "to", old. Only for captures.
@@ -1169,8 +1173,8 @@ void make_move(board *b,unsigned char from,unsigned char to,unmake *d){// make a
 					to1=from-8;
 				b->hash_key^=zorb[0][pll^1][to1];			// update Z key for deleted pawn. Here piece is never empty!
 				#if USE_PREFETCH
-				_mm_prefetch((const char*)&h[get_hash_index],_MM_HINT_T0); // prefetch the main hash
-				_mm_prefetch((const char*)&eh[get_eval_hash_index],_MM_HINT_T0); // prefetch eval hash
+				data_prefetch((const char*)&h[get_hash_index]); // prefetch the main hash
+				data_prefetch((const char*)&eh[get_eval_hash_index]); // prefetch eval hash
 				#endif
 				zp^=zorb[0][pll^1][to1];					// update ZP key for deleted pawn.
 				b->mat_key-=mat_key_mult[pll^1];			// remove captured pawn from material key
@@ -1194,8 +1198,8 @@ void make_move(board *b,unsigned char from,unsigned char to,unmake *d){// make a
 					assert(b->last_move<64 && (b->last_move&7)==2 || (b->last_move&7)==5);
 					b->hash_key^=last_move_hash_adj;
 					#if USE_PREFETCH
-					_mm_prefetch((const char*)&h[get_hash_index],_MM_HINT_T0); // prefetch the main hash
-					_mm_prefetch((const char*)&eh[get_eval_hash_index],_MM_HINT_T0); // prefetch eval hash
+					data_prefetch((const char*)&h[get_hash_index]); // prefetch the main hash
+					data_prefetch((const char*)&eh[get_eval_hash_index]); // prefetch eval hash
 					#endif
 				}
 			}
@@ -1378,7 +1382,7 @@ void unmake_move(board *b,unmake *d){
 	}
 }
 
-_declspec(noinline) unsigned int player_moved_into_check(board *b,unsigned int cell,unsigned char player){// returns 1 if in check, 0 otherwise. Only after king moves, where move into check is possible. Exclude attacks by pawns and king - those are excluded during move generation. This uses bitmasks, but not mailbox values.
+NOINLINE unsigned int player_moved_into_check(board *b,unsigned int cell,unsigned char player){// returns 1 if in check, 0 otherwise. Only after king moves, where move into check is possible. Exclude attacks by pawns and king - those are excluded during move generation. This uses bitmasks, but not mailbox values.
 	UINT64 bb,o;	
 	assert(cell<64);
 
@@ -1396,7 +1400,7 @@ _declspec(noinline) unsigned int player_moved_into_check(board *b,unsigned int c
 	return(0);// no attack found
 }
 
-_declspec(noinline) unsigned int move_gives_check(board *b,unsigned int from,unsigned int to){// returns 0/1 indicator. Board is unchanged. Called BEFORE the move is made. "b->player" makes the move, opponent is analysed for check. All board info is needed.
+NOINLINE unsigned int move_gives_check(board *b,unsigned int from,unsigned int to){// returns 0/1 indicator. Board is unchanged. Called BEFORE the move is made. "b->player" makes the move, opponent is analysed for check. All board info is needed.
 	UINT64 a,one,o;
 	unsigned int pll=b->player-1,opp_king_cell=b->kp[pll^1],d;
 
@@ -1468,7 +1472,7 @@ _declspec(noinline) unsigned int move_gives_check(board *b,unsigned int from,uns
 	return(moving_piece_is_pinned(b,from,to,pll+1));
 }
 
-_declspec(noinline) unsigned int moving_piece_is_pinned(board *b,unsigned int from,unsigned int to,unsigned int player){// returns 0/1 indicator. Board is unchanged. Called before the move. See if moving piece opens an existing slider attack (moving piece is pinned). "player" sliders are attacking "opponent's" king
+NOINLINE unsigned int moving_piece_is_pinned(board *b,unsigned int from,unsigned int to,unsigned int player){// returns 0/1 indicator. Board is unchanged. Called before the move. See if moving piece opens an existing slider attack (moving piece is pinned). "player" sliders are attacking "opponent's" king
 	UINT64 a,a2,o;
 	unsigned int pll=player-1,opp_king_cell=b->kp[pll^1],d=dir_norm[opp_king_cell][from],d2;
 	if( !d || d==dir_norm[to][from] ) return(0);			// early return: not on an attack line, or move is along the attack line
@@ -1485,9 +1489,9 @@ _declspec(noinline) unsigned int moving_piece_is_pinned(board *b,unsigned int fr
 	return(0);
 }
 
-_declspec(noinline) unsigned int cell_under_attack(board *b,unsigned int cell,unsigned char player){// returns position where opponent's attack originates, plus 64
+NOINLINE unsigned int cell_under_attack(board *b,unsigned int cell,unsigned char player){// returns position where opponent's attack originates, plus 64
 	UINT64 bb,o;
-	unsigned long bit;
+	uint32_t bit;
 	assert(cell<64);
 	
 	// pawns

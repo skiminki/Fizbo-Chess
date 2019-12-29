@@ -17,7 +17,7 @@ typedef struct{
 
 void convert_board_to_TS(board*,ts_entry*);
 
-unsigned int str_comp(char *input,char * command){
+unsigned int str_comp(const char *input, const char * command){
 	unsigned int i;
 	for(i=0;i<strlen(command);++i)
 		if( input[i]!=command[i] )
@@ -25,7 +25,7 @@ unsigned int str_comp(char *input,char * command){
 	return(1);
 }
 
-unsigned int skip_blanks(char * data){
+unsigned int skip_blanks(const char * data){
 	unsigned int o=0;
 	while( data[o]==' ' || data[o]==10 || data[o]==13 )
 		o++;

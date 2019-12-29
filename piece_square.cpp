@@ -1,4 +1,6 @@
 // piece-square tables
+#include <cstring>
+
 #include "chess.h"
 #include "coeffs.h"
 static short int piece_square0[2][6][2][64];						// mid/end, 6 pieces, 2 colors, 64 squares

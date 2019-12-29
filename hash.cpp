@@ -1,4 +1,9 @@
 // transposition table implementation
+
+#include <cstdlib>
+#include <cstring>
+#include <random>
+
 #include "chess.h"
 
 hash* h; // hash table
@@ -8,6 +13,19 @@ unsigned int TTage;// TT aging counter, 0 to 3.
 unsigned int HBITS=24; // option**** 16 Mil entries * 8 bytes= 128 Mb. 24 bits. Main hash is 22 bits of 4-way blocks.
 //unsigned int HBITS=27; // option**** 128 Mil entries * 8 bytes= 1 Gb. 27 bits. Main hash is 25 bits of 4-way blocks.
 static unsigned int HSIZE;
+
+namespace {
+
+	// We'll use the Visual C++ PRNG to get the same Zobrist keys for Fizbo-Linux
+	// and Fizbo on Windows. Here it is:
+	using VisualCppPRNG = std::linear_congruential_engine<uint_fast64_t, 214013, 2531011, uint64_t { 1 } << 32>;
+	VisualCppPRNG msRandom;
+
+	int ms_rand()
+	{
+		return (msRandom() >> 16) & 0x7FFFU;
+	}
+}
 
 void int_m2(void);
 extern UINT64 *eh; // eval hash pointer
@@ -26,16 +44,16 @@ void init_hash(void){
 	
 	// init zorbist keys
 	if( !HBL ){// only on first call.
-		srand(1678579445);
+		msRandom.seed(1678579445);
 		memset(zorb,0,sizeof(zorb));
 		for(j=0;j<2;++j) // player
 			for(k=0;k<6;++k) // piece
 				for(i=0;i<64;++i){ // square
-					z=rand();
-					z=(z<<15)^rand();//2
-					z=(z<<15)^rand();//3
-					z=(z<<15)^rand();//4
-					z=(z<<15)^rand();//5
+					z=ms_rand();
+					z=(z<<15)^ms_rand();//2
+					z=(z<<15)^ms_rand();//3
+					z=(z<<15)^ms_rand();//4
+					z=(z<<15)^ms_rand();//5
 					zorb[k][j][i]=z; // 15 bits each,x5= 75 bit total
 				}
 
@@ -136,7 +154,7 @@ unsigned int hashfull(void){// cound hash entries in the first 1000 spots, for c
 	return(s);
 }
 
-_declspec(noinline) unsigned int lookup_hash(unsigned int depth,board *b,hash_data *hd,unsigned int ply){// returns indicator only.
+NOINLINE unsigned int lookup_hash(unsigned int depth,board *b,hash_data *hd,unsigned int ply){// returns indicator only.
 	volatile hash *h1=&h[get_hash_index];// always start at the beginiing of block of 4 - 4-way set-associative structure.
 	hash h_read;
 	unsigned int i,lock4a=(((unsigned int *)&b->hash_key)[1])<<6;// shift out top 6 bits - they are depth.
@@ -173,7 +191,7 @@ _declspec(noinline) unsigned int lookup_hash(unsigned int depth,board *b,hash_da
 	return(0); // not a match
 }
 
-_declspec(noinline) void add_hash(int alp,int be,int score,unsigned char *move,unsigned int depth,board *b,unsigned int ply){
+NOINLINE void add_hash(int alp,int be,int score,unsigned char *move,unsigned int depth,board *b,unsigned int ply){
 	static const unsigned int TTage_convert[4][4]={{0,3,2,1},{1,0,3,2},{2,1,0,3},{3,2,1,0}};// converts current (first arg) and old (last arg) TT age into age difference
 	volatile hash *h2,*h1=&h[get_hash_index];// always start at the beginiing of block of 4 - 4-way set-associative structure.
 	hash h_read;

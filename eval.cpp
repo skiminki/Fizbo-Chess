@@ -1,6 +1,6 @@
 // evaluation function
 #include "chess.h"
-#include <intrin.h>
+#include <cstring>
 #include <math.h>
 #include "coeffs.h"
 
@@ -241,7 +241,7 @@ template <EvalType ET1> int evall(board *b){
 	#endif
 	short *adj2;
 	UINT64 bb,bb_2,attack_mask,one,km[2],o,attacks[6][2];// 0=current, 1=pawns, 2=..., 3=P+N+B, 4=P+N+B+R, 5=P+N+B+R+Q. 0=white attacks black, 1=black attacks white.
-	unsigned long bit,bit2;
+	uint32_t bit,bit2;
 	unsigned int d,king_attack_units[2],total_piece_value[2],index;
 	int sk;
 	short int sk2[2];
@@ -254,7 +254,7 @@ template <EvalType ET1> int evall(board *b){
 	h1d.lock=((unsigned int*)&b->hash_key)[1];
 	#endif
 
-	_mm_prefetch((const char*)&ph[b->pawn_hash_key%PHSIZE],_MM_HINT_T0); // prefetch pawn hash
+	data_prefetch((const char*)&ph[b->pawn_hash_key%PHSIZE]); // prefetch pawn hash
 	sk=mh[b->mat_key];// material key
 	((int*)sk2)[0]=0;//init
 	total_piece_value[0]=total_piece_value[1]=0;
@@ -720,7 +720,7 @@ template <EvalType ET1> int evall(board *b){
 			king_attack_units[0]+=(unsigned int)popcnt64l(attacks[1][1]&km[0]);// add 1 atack unit per pawn attack on king vicinity		
 			km[0]=king_masks[b->kp[0]]|(one<<b->kp[0]);
 			km[0]=((km[0]<<1)|km[0])&(~(km[0]>>1));// 2 rows in front of the king only
-			king_attack_units[0]+=max(0,2-(int)popcnt64l(b->piececolorBB[0][0]&km[0]));// plus one attack unit for missing pawn shield
+			king_attack_units[0]+=std::max(0,2-(int)popcnt64l(b->piececolorBB[0][0]&km[0]));// plus one attack unit for missing pawn shield
 		}
 		king_attack_units[0]+=base_king_attacks[b->kp[0]];
 
@@ -734,12 +734,12 @@ template <EvalType ET1> int evall(board *b){
 		if(d<4) pawn_deriv_coeffs[203+d]--;// 203-206.
 		#endif
 
-		int d2=adj[O_K_SAFETY+min(king_attack_units[0],61)];
+		int d2=adj[O_K_SAFETY+std::min(king_attack_units[0],61U)];
 		d2=(d2*KSscale[total_piece_value[1]])>>5;// scale with attacker material
 		sk-=d2; // here applying it to midgame only is a wash
 		#if TRAIN
-		ka[0]=min(king_attack_units[0],61);
-		pawn_deriv_coeffs[99+min(king_attack_units[0],61)]-=KSscale[total_piece_value[1]];// king safety 62
+		ka[0]=std::min(king_attack_units[0],61);
+		pawn_deriv_coeffs[99+std::min(king_attack_units[0],61U)]-=KSscale[total_piece_value[1]];// king safety 62
 		#endif		
 	}
 	#if LOG_STEPS
@@ -750,7 +750,7 @@ template <EvalType ET1> int evall(board *b){
 			king_attack_units[1]+=(unsigned int)popcnt64l(attacks[1][0]&km[1]);// add 1 atack unit per pawn attack on king vicinity		
 			km[1]=king_masks[b->kp[1]]|(one<<b->kp[1]);
 			km[1]=((km[1]>>1)|km[1])&(~(km[1]<<1));// 2 rows in front of the king only
-			king_attack_units[1]+=max(0,2-(int)popcnt64l(b->piececolorBB[0][1]&km[1]));// plus one attack unit for missing pawn shield
+			king_attack_units[1]+=std::max(0,2-(int)popcnt64l(b->piececolorBB[0][1]&km[1]));// plus one attack unit for missing pawn shield
 		}
 		king_attack_units[1]+=base_king_attacks[flips[b->kp[1]][1]];
 
@@ -764,11 +764,11 @@ template <EvalType ET1> int evall(board *b){
 		if( d<4 ) pawn_deriv_coeffs[203+d]++;// 203-206.
 		#endif
 
-		int d2=adj[O_K_SAFETY+min(king_attack_units[1],61)];
+		int d2=adj[O_K_SAFETY+std::min(king_attack_units[1],61U)];
 		d2=(d2*KSscale[total_piece_value[0]])>>5;// scale with attacker material
 		sk+=d2; // here applying it to midgame only is a wash
 		#if TRAIN
-		ka[1]=min(king_attack_units[1],61);
+		ka[1]=std::min(king_attack_units[1],61);
 		pawn_deriv_coeffs[99 + min(king_attack_units[1], 61)] += KSscale[total_piece_value[0]];// king safety 62
 		#endif
 	}
@@ -807,7 +807,7 @@ template <EvalType ET1> int evall(board *b){
 				int ps=bit+d0;// promotion square
 
 				// 4. add king distance bonus/penalty, for both kings. Only if not unstoppable.
-				int y,x=min(dist[b->kp[0]][bit]-1,3)*4+min(dist[b->kp[1]][bit]-1,3);// 0 to 3*4+3=15.
+				int y,x=std::min(dist[b->kp[0]][bit]-1,3)*4+std::min(dist[b->kp[1]][bit]-1,3);// 0 to 3*4+3=15.
 				if( total_piece_value[1] ){
 					y=adj[O_K_PP1+x];
 					x+=25;
@@ -879,7 +879,7 @@ template <EvalType ET1> int evall(board *b){
 							|| (bit>8 && b->piece[bit1-9]==65 && b->piece[bit1-8]==0 && (bit<16 || b->piece[bit1-16]==0) && dist[ps-1][b->kp[1]]>2 && dist[ps-8][b->kp[1]]>2)
 							|| (bit<56 && b->piece[bit1+7]==65 && b->piece[bit1+8]==0 && (bit>48 || b->piece[bit1+16]==0) && dist[ps-1][b->kp[1]]>2 && dist[ps+8][b->kp[1]]>2)
 						){ // friendly pawn on left/right, free to move, not attacked, opp king is far
-							unstoppable_pawn_dist[0]=min(unstoppable_pawn_dist[0],d0+1); // add 1 move for supporting pawn. Do i really need this here?
+							unstoppable_pawn_dist[0]=std::min(unstoppable_pawn_dist[0],d0+1); // add 1 move for supporting pawn. Do i really need this here?
 							sk-=y;
 							#if TRAIN
 							pawn_deriv_coeffs[161+x]--;
@@ -912,7 +912,7 @@ template <EvalType ET1> int evall(board *b){
 					d1=1;
 				d0+=(int)popcnt64l(b->colorBB[0]&blocked_mask[bit]);// add to distance count of friendly non-pawn blockers (all pawn blockers have already been excluded)
 				if( dist[ps][b->kp[1]]>d0+d1 ){
-					unstoppable_pawn_dist[0]=min(unstoppable_pawn_dist[0],d0);
+					unstoppable_pawn_dist[0]=std::min(unstoppable_pawn_dist[0],d0);
 					sk-=y;
 					#if TRAIN
 					pawn_deriv_coeffs[161+x]--;
@@ -928,7 +928,7 @@ template <EvalType ET1> int evall(board *b){
 					else// opp king on higher file
 						blocker=ps+7;
 					if( b->piece[blocker] ){// opp king path is blocked!
-						unstoppable_pawn_dist[0]=min(unstoppable_pawn_dist[0],d0);
+						unstoppable_pawn_dist[0]=std::min(unstoppable_pawn_dist[0],d0);
 						sk-=y;
 						#if TRAIN
 						pawn_deriv_coeffs[161+x]--;
@@ -939,7 +939,7 @@ template <EvalType ET1> int evall(board *b){
 
 				// 2a. check if friendly king fully protects my promotion path
 				if( dist[b->kp[0]][ps]==1 && dist[b->kp[0]][bit]==1 && ( (bit&56)!=(b->kp[0]&56) || (bit>7 && bit<56) ) ){// king protects both pawn and promotion square, and is either not blocking or on file other than A or H
-					unstoppable_pawn_dist[0]=min(unstoppable_pawn_dist[0],d0);
+					unstoppable_pawn_dist[0]=std::min(unstoppable_pawn_dist[0],d0);
 					sk-=y;
 					#if TRAIN
 					pawn_deriv_coeffs[161+x]--;
@@ -949,7 +949,7 @@ template <EvalType ET1> int evall(board *b){
 
 				// 2b. check if friendly king is closer to pawn and to promotion square than opp king. This always makes the pawn unstoppable (I think).
 				if( dist[b->kp[0]][ps]+d1<dist[b->kp[1]][ps] && dist[b->kp[0]][bit]+d1<dist[b->kp[1]][bit] ){
-					unstoppable_pawn_dist[0]=min(unstoppable_pawn_dist[0],d0);
+					unstoppable_pawn_dist[0]=std::min(unstoppable_pawn_dist[0],d0);
 					sk-=y;
 					#if TRAIN
 					pawn_deriv_coeffs[161+x]--;
@@ -986,7 +986,7 @@ template <EvalType ET1> int evall(board *b){
 				int ps=bit&56;// promotion square. Real one
 
 				// 4. add king distance bonus/penalty, for both kings. Only if not unstoppable.
-				int y,x=min(dist[b->kp[1]][flips[bit][1]]-1,3)*4+min(dist[b->kp[0]][flips[bit][1]]-1,3);// 0 to 3*4+3=15.
+				int y,x=std::min(dist[b->kp[1]][flips[bit][1]]-1,3)*4+std::min(dist[b->kp[0]][flips[bit][1]]-1,3);// 0 to 3*4+3=15.
 				if( total_piece_value[0] ){
 					y=adj[O_K_PP1+x];
 					x+=25;
@@ -1060,7 +1060,7 @@ template <EvalType ET1> int evall(board *b){
 							|| (bit>8 && b->piece[fb1-7]==129 && b->piece[fb1-8]==0 && (bit<16 || b->piece[fb1-16]==0) && dist[ps+1][b->kp[0]]>2 && dist[ps-8][b->kp[0]]>2)
 							|| (bit<56 && b->piece[fb1+9]==129 && b->piece[fb1+8]==0 && (bit>48 || b->piece[fb1+16]==0) && dist[ps+1][b->kp[0]]>2 && dist[ps+8][b->kp[0]]>2)
 						){ // friendly pawn on left/right, free to move, not attacked, opp king is far
-							unstoppable_pawn_dist[1]=min(unstoppable_pawn_dist[1],d0+1); // add 1 move for supporting pawn. Do i really need this here?
+							unstoppable_pawn_dist[1]=std::min(unstoppable_pawn_dist[1],d0+1); // add 1 move for supporting pawn. Do i really need this here?
 							sk+=y;
 							#if TRAIN
 							pawn_deriv_coeffs[161+x]++;
@@ -1093,7 +1093,7 @@ template <EvalType ET1> int evall(board *b){
 					d1=1;
 				d0+=(int)popcnt64l(flip_color(b->colorBB[1])&blocked_mask[bit]);// add to distance count of friendly non-pawn blockers (all pawn blockers have already been excluded)
 				if( dist[ps][b->kp[0]]>d0+d1 ){
-					unstoppable_pawn_dist[1]=min(unstoppable_pawn_dist[1],d0);
+					unstoppable_pawn_dist[1]=std::min(unstoppable_pawn_dist[1],d0);
 					sk+=y;
 					#if TRAIN
 					pawn_deriv_coeffs[161+x]++;
@@ -1109,7 +1109,7 @@ template <EvalType ET1> int evall(board *b){
 					else// opp king on higher file
 						blocker=ps+9;
 					if( b->piece[blocker] ){// opp king path is blocked!
-						unstoppable_pawn_dist[1]=min(unstoppable_pawn_dist[1],d0);
+						unstoppable_pawn_dist[1]=std::min(unstoppable_pawn_dist[1],d0);
 						sk+=y;
 						#if TRAIN
 						pawn_deriv_coeffs[161+x]++;
@@ -1121,7 +1121,7 @@ template <EvalType ET1> int evall(board *b){
 				// 2a. check if friendly king fully protects my promotion path
 				bit=flips[bit][1];// flip it, so that from now on it is "normal"****************************
 				if( dist[b->kp[1]][ps]==1 && dist[b->kp[1]][bit]==1 && ( (bit&56)!=(b->kp[1]&56) || (bit>7 && bit<56) ) ){// king protects both pawn and promotion square, and is either not blocking or on file other than A or H
-					unstoppable_pawn_dist[1]=min(unstoppable_pawn_dist[1],d0);
+					unstoppable_pawn_dist[1]=std::min(unstoppable_pawn_dist[1],d0);
 					sk+=y;
 					#if TRAIN
 					pawn_deriv_coeffs[161+x]++;
@@ -1131,7 +1131,7 @@ template <EvalType ET1> int evall(board *b){
 
 				// 2b. check if friendly king is closer to pawn and to promotion square than opp king. This always makes the pawn unstoppable (I think).
 				if( dist[b->kp[1]][ps]+d1<dist[b->kp[0]][ps] && dist[b->kp[1]][bit]+d1<dist[b->kp[0]][bit] ){
-					unstoppable_pawn_dist[1]=min(unstoppable_pawn_dist[1],d0);
+					unstoppable_pawn_dist[1]=std::min(unstoppable_pawn_dist[1],d0);
 					sk+=y;
 					#if TRAIN
 					pawn_deriv_coeffs[161+x]++;

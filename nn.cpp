@@ -1,11 +1,9 @@
 // neural network logic
 #include "chess.h"
-#include <intrin.h>
-#if USE_AVX
 #include <xmmintrin.h>
-#endif
 #include <math.h>
 #include "threads.h"
+#include "vectorutils.h"
 
 // ts entry data structure
 typedef struct{
@@ -83,7 +81,7 @@ void convert_TS_to_board(board*,ts_entry*);
 #define num_n1	64						// number of first layer neurons. Plus bias.
 
 // 1 NN
-static __declspec(align(64)) const short int c1ia_prod[num_inputs-2][num_n1]={
+alignas(64) static const short int c1ia_prod[num_inputs-2][num_n1]={
 // 4 way symm = +58. 8/10/2017
 90,7,-2,-29,-2,22,-106,22,6,2,-18,1,22,-6,-106,-17,52,9,-9,12,11,10,-9,0,-1,-28,-17,2,-16,10,-67,-16,-36,6,17,36,2,0,7,-24,-9,27,18,-4,-13,6,25,0,-57,8,-1,19,0,1,98,10,7,-0,27,11,22,9,129,2,
 92,-27,33,4,6,5,-120,-9,-18,-2,-18,18,22,4,-110,2,41,-9,-20,20,-8,10,-90,31,-29,-21,9,-3,-15,8,-81,-14,-52,7,15,-17,13,-19,82,6,2,46,-12,-95,28,16,61,13,-129,14,-11,-1,-8,-10,70,-17,-9,26,13,-3,4,-20,114,5,
@@ -855,8 +853,8 @@ static __declspec(align(64)) const short int c1ia_prod[num_inputs-2][num_n1]={
 };
 
 // these vars are being trained
-static __declspec(align(64)) float coeffs_1_nna[num_inputs][num_n1];	// coeffs for first layer
-static __declspec(align(64)) float coeffs_2_nna[num_n1];				// coeffs for second layer
+alignas(64) static float coeffs_1_nna[num_inputs][num_n1];	// coeffs for first layer
+alignas(64) static float coeffs_2_nna[num_n1];				// coeffs for second layer
 
 static double l_rate;						// learning rate
 static ts_entry2 *ts_all;					// training set data
@@ -871,7 +869,7 @@ typedef struct {
 } data_nn;
 
 
-inline float RLU(float s){return(max(0,s));} // rectified linear unit
+inline float RLU(float s){return(std::max<float>(0,s));} // rectified linear unit
 
 void pass_forward2plus(data_nn *d){// compute output of network: populate second and later layers
 	float sa;
@@ -892,7 +890,7 @@ void pass_forward2plus(data_nn *d){// compute output of network: populate second
 short int pass_forward_b(board *b){// compute output of network, taking board as input. Using AVX2 instructions.
 	__m256i v0=_mm256_setzero_si256(),v1,v2,v3,v4;// zero
 	UINT64 m;
-	unsigned long bit;
+	uint32_t bit;
 	unsigned int p,q,k;
 	
 	m=b->colorBB[0]|b->colorBB[1]; // all material
@@ -906,15 +904,14 @@ short int pass_forward_b(board *b){// compute output of network, taking board as
 		v3=_mm256_add_epi16(v3,((__m256i*)&c1ia_prod[k][0])[2]);v4=_mm256_add_epi16(v4,((__m256i*)&c1ia_prod[k][0])[3]);
 	}while(m);
 	v1=_mm256_sub_epi16(_mm256_add_epi16(_mm256_max_epi16(v1,v0),_mm256_max_epi16(v2,v0)),_mm256_add_epi16(_mm256_max_epi16(v3,v0),_mm256_max_epi16(v4,v0))); // add/sub: assume first 32 are +, last 32 are -.
-	short int s=0;
-	for(p=0;p<16;++p) s+=v1.m256i_i16[p]; // sum last layer
-	return(s);	// return score for white
+
+	return VectorUtils::sumOfElements16i(v1);	// return score for white
 }
 #else
 short int pass_forward_b(board *b){// compute output of network, taking board as input. Using SSE2 instructions. Only 2% slower than AVX2 code
 	__m128i v0=_mm_setzero_si128(),v1,v2,v3,v4,v5,v6,v7,v8;// zero
 	UINT64 m;
-	unsigned long bit;
+	uint32_t bit;
 	unsigned int p,q,k;
 
 	m=b->colorBB[0]|b->colorBB[1]; // all material
@@ -931,9 +928,8 @@ short int pass_forward_b(board *b){// compute output of network, taking board as
 	}while(m);
 	v1=_mm_sub_epi16(_mm_add_epi16(_mm_add_epi16(_mm_max_epi16(v1,v0),_mm_max_epi16(v2,v0)),_mm_add_epi16(_mm_max_epi16(v3,v0),_mm_max_epi16(v4,v0))),
 	   _mm_add_epi16(_mm_add_epi16(_mm_max_epi16(v5,v0),_mm_max_epi16(v6,v0)),_mm_add_epi16(_mm_max_epi16(v7,v0),_mm_max_epi16(v8,v0)))); // add/sub: assume first 32 are +, last 32 are -.
-	short int s=0;
-	for(p=0;p<8;++p) s+=v1.m128i_i16[p]; // sum last layer
-	return(s);	// return score for white
+
+	return VectorUtils::sumOfElements16i(v1);	// return score for white
 }
 #endif
 
