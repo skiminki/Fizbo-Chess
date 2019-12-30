@@ -13,21 +13,20 @@ using UINT64 = std::uint64_t;
 #include <assert.h>
 
 #define ENGINE 1		// 1=run as engine, 0=run as windowed interface
-#define USE_EGTB 1		// 1
+#define USE_EGTB 0		// 1
 #define ALLOW_LOG 0
 #define calc_pst 0		// 1=calculate in eval, 0=update incrementally. Here 0 is slightly faster - use that.
 #define player_zorb 0xab42094fee35f92e
 
 #ifdef __AVX__
 #define USE_AVX 1		// this is 5% faster. Also turn off AVX2 compiler switch.
+#define USE_PEXT 1
 #else
 #define USE_AVX 0
+#define USE_PEXT 0
 #endif
 
 #define SPS_CREATED_NUM_MAX 22 // max SPs created by 1 thread
-
-#undef USE_EGTB
-#define USE_EGTB 0 // WAR
 
 // portable
 #define blsr64l(a) BitUtils::blsr(static_cast<uint64_t>(a))
@@ -38,9 +37,6 @@ using UINT64 = std::uint64_t;
 #define BSR64l(a,b) BitScanReverse64(a,b) // instruction
 
 #define popcnt64l(a) BitUtils::popcount(static_cast<uint64_t>(a)) // legacy: +13% run time.
-
-//#define BSF64l(a,b) f_BSF64(a,b) // 32-bit legacy
-//#define BSR64l(a,b) f_BSR64(a,b) // 32-bit legacy
 
 #define TRAIN 0 		// 1=logic for training set - no hashing, record all positions. In training, turn-off EGBB.
 #define USE_VIRT_MEM 0	// 1 portable. +3.8% run time.
@@ -69,7 +65,7 @@ typedef struct{
 	short int stand_pat;
 	char ch_ext;		// check extension data
 	char cum_cap_val;	// cumulative capture value
-	char to_square;		// "to" square
+	uint8_t to_square;		// "to" square
 	#if NDEBUG
 	#else
 	char cap_val;
@@ -246,7 +242,7 @@ unsigned int find_all_get_out_of_check_moves_slow(board*,unsigned char*);
 void make_null_move(board*);
 void unmake_null_move(board*);
 void make_move(board*,unsigned char,unsigned char,unmake*);
-void unmake_move(board*,unmake*);
+void unmake_move(board *, const unmake *);
 unsigned int boards_are_the_same(board*,board*,unsigned char,unsigned char);
 int Msearch(board*,const int,const unsigned int,int,int,unsigned int);
 unsigned int get_piece_moves(board*,unsigned char*,unsigned char,unsigned int);
@@ -299,9 +295,9 @@ extern unsigned int HBITS;
 extern unsigned int TTage;
 extern int endgame_weight_all_i[];
 extern unsigned char dist[64][64];
-extern short int piece_square[6][2][64][2];
+extern short int piece_square[6][2][64][2]; // [piece][player][square][midgame(0)/endgame(1)]
 extern unsigned int depth0;
-extern UINT64 zorb[6][2][64];
+extern UINT64 zorb[6][2][64]; // [piece][player][square]
 extern int timeout;
 extern int timeout_complete;
 extern int time_start;
@@ -314,7 +310,7 @@ extern UINT64 rook_masks[];
 extern UINT64 king_masks[];
 extern UINT64 dir_mask[5][64];
 
-extern const unsigned char flips[64][8];
+extern const uint8_t flips[64][8];
 extern const UINT64 passed_mask[];
 extern const UINT64 blocked_mask[];
 extern unsigned char dir_norm[64][64];

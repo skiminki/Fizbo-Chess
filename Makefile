@@ -7,7 +7,8 @@ FIZBO-SRC := \
 	game_util.cpp \
 	hash.cpp \
 	magic_bb.cpp \
-	nn.cpp \
+	nn-eval.cpp \
+	nn-weights.cpp \
 	os-compat.cpp \
 	pawn.cpp \
 	piece_square.cpp \
@@ -24,7 +25,7 @@ UNIT-TESTS-OBJ := $(patsubst %.cpp,.objs/%.o,$(UNIT-TESTS-SRC))
 ALL-DEPS := $(patsubst %.cpp,.deps/%.d,$(FIZBO-SRC) $(UNIT-TESTS-SRC))
 
 EXTRAFLAGS := -DNDEBUG
-CXXFLAGS := -Wall -Wpedantic -O3 -flto -ggdb -std=c++17 -fmax-errors=3 -march=native -pthread $(EXTRAFLAGS)
+CXXFLAGS := -Wall -Wpedantic -O3 -flto -ggdb -std=c++17 -march=native -pthread $(EXTRAFLAGS)
 
 all: fizbo unit-tests
 

@@ -397,18 +397,17 @@ static uint32_t calculate_f(void *p_unused){// calculation function
 }
 
 static unsigned int str_comp(const char *input, const char * command){
-	unsigned int i;
-	size_t cmdLen = strlen(command);
-	for(unsigned i=0;i<cmdLen;++i)
-		if( input[i]!=command[i] )
-			return(0);
-	return(1);
+	const size_t cmdLen { strlen(command) };
+
+	for (size_t i { 0 }; i < cmdLen; ++i)
+		if (input[i] != command[i])
+			return 0;
+	return 1;
 }
 
 static NOINLINE void stop_th(void){// stop pondering thread
 	if( calculate_h.joinable() ){
 		int tol=get_time()-1000;
-		uint32_t ret1;
 		do{
 			timer_depth=0;
 			timeout_complete=timeout=tol; // set timeout to "in the past"

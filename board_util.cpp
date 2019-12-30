@@ -214,48 +214,6 @@ static inline unsigned int get_queen_moves(board *b,unsigned char *list,unsigned
 	return(mc);
 }
 
-static inline unsigned int get_king_moves_l(board *b,unsigned char *list,unsigned char player,unsigned int cell){
-	UINT64 p_a,attack_mask;
-
-	// eliminate cells attacked by opp pawns
-	if( (player&2) )
-		p_a=(b->piececolorBB[0][0]<<9) | (b->piececolorBB[0][0]>>7);// white pawns attack
-	else
-		p_a=(b->piececolorBB[0][1]<<7) | (b->piececolorBB[0][1]>>9);// black pawns attack
-	
-	p_a|=b->colorBB[player-1];// eliminate cells occupied by player (keep opponent - those are attacks)
-	p_a|=king_masks[b->kp[2-player]];// eliminate cells attacked by opp king
-	attack_mask=king_masks[cell]&(~p_a);
-
-	uint32_t bit;
-	unsigned int mc=0;
-	while( attack_mask ){
-		GET_BIT(attack_mask)
-		list[0]=cell;list[1]=(unsigned char)bit;mc++;list+=2;
-	}
-
-	if( b->castle ){// skip castle logic if all flags are off
-		// check for castling
-		// king is not in check, it does not pass through a square that is under attack by an enemy piece, and does not end up in check.
-		if( player==1 ){//white
-			if( (b->castle&1) && (b->piece[8]+b->piece[16]+b->piece[24])==0 && !cell_under_attack(b,16,1) && !cell_under_attack(b,24,1) && !cell_under_attack(b,32,1) && dist[b->kp[1]][16]>1 && dist[b->kp[1]][24]>1 && dist[b->kp[1]][32]>1 ){// up
-				list[0]=32;list[1]=16;mc++;list+=2;
-			}
-			if( (b->castle&2) && (b->piece[40]+b->piece[48])==0 && !cell_under_attack(b,32,1) && !cell_under_attack(b,40,1) && !cell_under_attack(b,48,1) && dist[b->kp[1]][48]>1 && dist[b->kp[1]][40]>1 && dist[b->kp[1]][32]>1 ){// down
-				list[0]=32;list[1]=48;mc++;list+=2;
-			}
-		}else{// black
-			if( (b->castle&4) && (b->piece[15]+b->piece[23]+b->piece[31])==0 && !cell_under_attack(b,23,2) && !cell_under_attack(b,31,2) && !cell_under_attack(b,39,2) && dist[b->kp[0]][23]>1 && dist[b->kp[0]][31]>1 && dist[b->kp[0]][39]>1 ){// up
-				list[0]=39;list[1]=23;mc++;list+=2;
-			}
-			if( (b->castle&8) && (b->piece[47]+b->piece[55])==0 && !cell_under_attack(b,39,2) && !cell_under_attack(b,47,2) && !cell_under_attack(b,55,2) && dist[b->kp[0]][55]>1 && dist[b->kp[0]][47]>1 && dist[b->kp[0]][39]>1 ){// down
-				list[0]=39;list[1]=55;mc++;list+=2;
-			}
-		}
-	}
-	return(mc);
-}
-
 static inline unsigned int get_king_moves_l_no_captures(board *b,unsigned char *list,unsigned char player,unsigned int cell){
 	UINT64 p_a,attack_mask;
 
@@ -358,7 +316,7 @@ static unsigned int get_ep_moves_l(board *b,unsigned char *list,unsigned char pl
 }
 
 unsigned int get_all_moves_new_part1(board *b,unsigned char *list,UINT64 *pinBB_r){// get list of all available moves - captures and promotions only. Return count. Put moves on the list.
-	UINT64 move_count=0,j,mc1,pinBB=0,pinned_pawns=0,one=1,a,a2,o=b->colorBB[0]|b->colorBB[1],allowed_mask=b->colorBB[2-b->player];// only opp cell are allowed
+	UINT64 move_count=0,j,mc1,pinBB=0,pinned_pawns=0,a,a2,o=b->colorBB[0]|b->colorBB[1],allowed_mask=b->colorBB[2-b->player];// only opp cell are allowed
 	uint32_t bit;
 	unsigned int king_position=b->kp[b->player-1],p_c=0,p_cell[8],p_d[8],player=b->player;
 	unsigned char p_d2[64];// for each cell, direction of allowed moves: 1,7,8,9. 0 if all allowed.
@@ -620,7 +578,7 @@ unsigned int get_all_moves_new_part1(board *b,unsigned char *list,UINT64 *pinBB_
 }
 
 unsigned int get_all_moves_new_part2(board *b,unsigned char *list,UINT64 pinBB){// get list of all available moves - excluding captures and promotions. Return count. Put moves on the list.
-	UINT64 move_count=0,mc1,pinned_pawns=0,one=1,a,a2,o=b->colorBB[0]|b->colorBB[1],allowed_mask=~o; // only empties are allowed
+	UINT64 move_count=0,mc1,pinned_pawns=0,a,a2,o=b->colorBB[0]|b->colorBB[1],allowed_mask=~o; // only empties are allowed
 	uint32_t bit;
 	unsigned int king_position=b->kp[b->player-1],j,p_c=0,p_cell[8],p_d[8],player=b->player;
 	unsigned char p_d2[64];// for each cell, direction of allowed moves: 1,7,8,9. 0 if all allowed.
@@ -1092,23 +1050,25 @@ void make_null_move(board *b){// null move: change player, score and TT hash key
 	#endif
 }
 
-void make_move(board *b,unsigned char from,unsigned char to,unmake *d){// make a move.
+// make a move
+void make_move(board *b,unsigned char from,unsigned char to,unmake *d)
+{
 	UINT64 z,zp,one=1,ToBB=(one<<to),fromToBB;
-	unsigned int pll=b->player-1;	// now player is 0/1. Use ^1 to invert.
+	const unsigned int pll=b->player-1;	// now player is 0/1. Use ^1 to invert.
 	#if calc_pst==0
 	int sl4;						// local scores
 	#endif
-	unsigned char v=b->piece[from];	// get piece to move
-	unsigned char w=b->piece[to];	// get piece replaced
-	unsigned int vi=(((v&7)-1)<<1)+pll; // index of "from" piece
+	const unsigned char v=b->piece[from];	// get piece to move
+	const unsigned char w=b->piece[to];	// get piece replaced
+	const unsigned int fromPieceIndex { (v & 7U) - 1U};
 
 	// save un-make data - 40 bytes including fillers
 	d->hash_key=b->hash_key;								// save 8 bytes - main hash.
 	((UINT64*)&d->kp[0])[0]=((UINT64*)&b->kp[0])[0];		// save 8 bytes - kp[2], player, last move, halfmoveclock. 5 bytes. Plus filler(3).
 
 	// Z key update
-	z=zorb[0][vi][to];		// update Z key for "to", new piece. Here piece is never empty!
-	z^=zorb[0][vi][from];	// update Z key for "from". Here piece is never empty!
+	z=zorb[fromPieceIndex][pll][to];		// update Z key for "to", new piece. Here piece is never empty!
+	z^=zorb[fromPieceIndex][pll][from];	// update Z key for "from". Here piece is never empty!
 	if( b->last_move!=INVALID_LAST_MOVE ){
 		assert(b->last_move<64 && (b->last_move&7)==2 || (b->last_move&7)==5);
 		b->hash_key^=last_move_hash_adj;
@@ -1135,30 +1095,31 @@ void make_move(board *b,unsigned char from,unsigned char to,unmake *d){// make a
 
 	// score update
 	#if calc_pst==0
-	sl4=((int*)&piece_square[0][vi][to][0])[0];	// add new "to". Here piece is never empty!
-	sl4-=((int*)&piece_square[0][vi][from][0])[0];// remove current "from". Here piece is never empty!
+	sl4=((int*)&piece_square[fromPieceIndex][pll][to][0])[0];	// add new "to". Here piece is never empty!
+	sl4-=((int*)&piece_square[fromPieceIndex][pll][from][0])[0];// remove current "from". Here piece is never empty!
 	#endif
 
-	if( w ){// capture.
-		unsigned int wi=(((w&7)-1)<<1)+pll^1;		// index of "to" piece
-		UINT64 zz=zorb[0][wi][to];
+	if (w) {// capture.
+		const unsigned int opponent { pll ^ 1U };
+		const unsigned int toPieceIndex { (w & 7U) - 1U };
+		const uint64_t zz=zorb[toPieceIndex][opponent][to];
 		b->hash_key^=z^player_zorb^zz;				// update Z key for "to", old. Only for captures. Here piece is never empty!. flip player;
 		#if USE_PREFETCH
-		data_prefetch((const char*)&h[get_hash_index]); // prefetch the main hash
-		data_prefetch((const char*)&eh[get_eval_hash_index]); // prefetch eval hash
+		data_prefetch(&h[get_hash_index]); // prefetch the main hash
+		data_prefetch(&eh[get_eval_hash_index]); // prefetch eval hash
 		#endif
 		zp=(v&7)==1?z:0;							// Zp=Z, if pawn move. This has to be before application of "wi".
 		zp^=(w&7)==1?zz:0;							// update Zp key for "to", old. Only for captures.
 		b->pawn_hash_key^=zp;
 		#if calc_pst==0
-		sl4-=((int*)&piece_square[0][wi][to][0])[0];	// remove current "to". Only for captures. Here piece is never empty!
+		sl4-=((int*)&piece_square[toPieceIndex][opponent][to][0])[0];	// remove current "to". Only for captures. Here piece is never empty!
 		#endif
-		b->mat_key-=mat_key_mult[wi];				// remove captured piece from material key
+		b->mat_key-=mat_key_mult[toPieceIndex * 2U + opponent];			// remove captured piece from material key
 		d->move_type=2;								// move type is capture
 		d->w=w;										// piece captured
 		d->cc=to;									// square captured
 		b->colorBB[pll^1]^=ToBB;					// update occupied BB of opponent for capture
-		b->piececolorBB[0][wi]^=ToBB;				// update occupied BB of opponent for capture
+		b->piececolorBB[toPieceIndex][opponent]^=ToBB;				// update occupied BB of opponent for capture
 		b->halfmoveclock=0;							// reset half-move clock for capture
 		b->piece_value-=pv10[w&7];					// update total piece value
 	}else{// no capture
@@ -1211,7 +1172,7 @@ void make_move(board *b,unsigned char from,unsigned char to,unmake *d){// make a
 	// update bitboards
 	fromToBB=ToBB|(one<<from);
 	b->colorBB[pll]^=fromToBB;					// update occupied BB of player
-	b->piececolorBB[0][vi]^=fromToBB;			// update occupied BB of player
+	b->piececolorBB[fromPieceIndex][pll]^=fromToBB;			// update occupied BB of player
 
 	// castling rights update - only if there are castling rights left.
 	if( b->castle && (fromToBB&0x8100008100000081) ){// only if castling rights left and to/from impacts kings or rooks.
@@ -1316,7 +1277,8 @@ void make_move(board *b,unsigned char from,unsigned char to,unmake *d){// make a
 	#endif
 }
 
-void unmake_move(board *b,unmake *d){
+void unmake_move(board *b, const unmake *d){
+
 	// restore un-make data - 40 bytes including fillers
 	b->hash_key=d->hash_key;								// 8 bytes
 	b->pawn_hash_key=d->pawn_hash_key;						// 8 bytes
@@ -1325,9 +1287,9 @@ void unmake_move(board *b,unmake *d){
 	((UINT64*)&b->mat_key)[0]=((UINT64*)&d->mat_key)[0];	// 8 bytes - material hash+piece value
 
 	// define bitmasks
-	UINT64 one=1;
-	UINT64 ToBB=(one<<d->to);
-	UINT64 fromToBB=ToBB|(one<<d->from);
+	constexpr uint64_t one { 1 };
+	const uint64_t ToBB { one << d->to };
+	const uint64_t fromToBB { ToBB | (one << d->from) };
 
 	// undo promotion
 	if( d->move_type&4 ){

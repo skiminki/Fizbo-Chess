@@ -934,7 +934,7 @@ top_of_the_move_loop:// end of top logic, excluded by slave ********************
 
 		// futility cuts. // FU is only +5 ELO
 		unsigned int mgc=move_gives_check(b,mo.from,mo.to);
-		if( 
+		if(
 			futility_limit							// not PV, not in check, low depth
 			&& mo.score<100							// skip captures/TT. Not excluding killers is a wash.
 			&& !mgc									// exclude checking moves. This is +5 ELO vs only excluding discovered checks. +11 ELO vs not excluding any checks
@@ -942,11 +942,17 @@ top_of_the_move_loop:// end of top logic, excluded by slave ********************
 			int LMR1=int(ln[depth]*ln[std::min(63U,i)]*lmr_m[1]+lmr_a[1]);// ln+ln tabulated: baseline
 			new_depth=std::max(0,depth-LMR1);
 			if( new_depth<6 ){
-				j=(((b->piece[mo.from]&7)-1)<<1)+b->player-1; // index
-				int sm=piece_square[0][j][mo.to][0]-piece_square[0][j][mo.from][0]; // mid
-				int se=piece_square[0][j][mo.to][1]-piece_square[0][j][mo.from][1]; // end
-				sm+=(((se-sm)*endgame_weight_all_i[b->piece_value])>>10); // blended
-				if( sm<alp_in-FU[new_depth-1]-stand_pat-40 ){
+				const unsigned int fromPieceIndex { (b->piece[mo.from] & 7U) - 1U };
+				const unsigned int playerIndex { b->player - 1U };
+
+				const auto &pstFromPlayer { piece_square[fromPieceIndex][playerIndex] };
+
+				const int sm = pstFromPlayer[mo.to][0] - pstFromPlayer[mo.from][0];
+				const int se = pstFromPlayer[mo.to][1] - pstFromPlayer[mo.from][1];
+
+				const int score = sm + (((se-sm)*endgame_weight_all_i[b->piece_value])>>10); // blended
+
+				if (score<alp_in-FU[new_depth-1]-stand_pat-40) {
 					if( !bm->legal_moves ) bm->legal_moves=1;	// count legal move.
 					continue;
 				}
@@ -1282,7 +1288,7 @@ top_of_the_move_loop:// end of top logic, excluded by slave ********************
 int see_move(board *b,unsigned int from,unsigned int cell){// static exchange evaluator version 3 - return score for the player. The move has not been played. This is called 0.63 times per node.
 	UINT64 attackerBB,a,past_attacks,o=b->colorBB[0]|b->colorBB[1],aB,aR,bb,no_from=(~(UINT64(1)<<from));
 	uint32_t froml;
-	unsigned int i,i0,j,d,wi,vi,kpl,pll=(b->player-1)^1; // pll is player after the move is made.
+	unsigned int i,i0,j,d,vi,kpl,pll=(b->player-1)^1; // pll is player after the move is made.
 	int list[32],va,egw=endgame_weight_all_i[b->piece_value];// blend using initial material
 	short int s2[2];
 	unsigned char w;
@@ -1300,9 +1306,7 @@ int see_move(board *b,unsigned int from,unsigned int cell){// static exchange ev
 	if( cell==b->last_move && i0==0 ) // EP capture - make captured piece pawn.
 		w=1;
 	if( w ){// capture
-		w=(w&7);
-		wi=(w<<1)+pll-2;								// index of "to" piece
-		((int*)s2)[0]-=((int*)&piece_square[0][wi][cell][0])[0];
+		((int*)s2)[0]-=((int*)&piece_square[(w & 7U) - 1][pll][cell][0])[0];
 	}
 	va=s2[0]+(((s2[1]-s2[0])*egw)>>10);	// blend
 	if( !pll ) va=-va;			// Make it positive.
@@ -1366,8 +1370,8 @@ int see_move(board *b,unsigned int from,unsigned int cell){// static exchange ev
 		}
 
 		// calculate move value based on PST
-		wi=(i0<<1)+pll^1;// index of "to" piece=prior "from" piece
-		((int*)s2)[0]=((int*)&piece_square[0][wi][cell][0])[0]; // remove current "to"
+		((int*)s2)[0]=((int*)&piece_square[i0][pll ^ 1][cell][0])[0]; // remove current "to"
+
 		if( i==0 ){// for pawn, add PST move change: to get promotions and almost promotions.
 			vi=(i<<1)+pll;// index of "from" piece
 			((int*)s2)[0]-=((int*)&piece_square[0][vi][cell][0])[0]; // add new "to"
@@ -1576,7 +1580,29 @@ qse:
 	return(alp);// here i return alp and not standing pat, because standing pat is already a floor to alp!
 }
 
-extern UINT64 ccc[];
+// v/a. High means sort to the front.
+static constexpr int Qsort_order[6][8] = {
+	{  34,0,0,0,0,0,7,0 },
+	// ep z z z z z p* z
+
+	{ 6, 2, 3, 5, 1, 4,0,0, },
+	// pp np bp rp qp kp z z
+
+	{ 25,14,11,12,9, 21,8,0 },
+	// pn nn bn rn qn kn pn*
+
+	{ 22,15,19,17,16,18,10,0},
+	// z pb nb bb rb qb kb pb*
+
+	{30,24,23,20,13,28,27,0},
+	// z pr nr br rr qr kr pr*
+
+	{36,33,35,31,26,29,32}
+	// z pq nq bq rq qq kq pq*
+};
+
+
+
 static void Qsort(board *b,unsigned char *list,unsigned int mc){
 	//UINT64 bb,one=1;
 	unsigned int i,j;
@@ -1604,8 +1630,6 @@ static void Qsort(board *b,unsigned char *list,unsigned int mc){
 		w=w&7; // victim. 0=EP. Or promo.
 
 		if( v==1 && ((to&7)==0 || (to&7)==7) ) v=7;// promotion: a=7.
-		static const int Qsort_order[6][8]={34,0,0,0,0,0,7,0,    6, 2, 3, 5, 1, 4,0,0, 25,14,11,12,9, 21,8,0,  22,15,19,17,16,18,10,0, 30,24,23,20,13,28,27,0, 36,33,35,31,26,29,32};// v/a. High means sort to the front.
-		//                                  ep z z z z z p* z    pp np bp rp qp kp z z pn nn bn rn qn kn pn* z pb nb bb rb qb kb pb* z pr nr br rr qr kr pr* z pq nq bq rq qq kq pq*
 		assert(w<6);
 		assert(v-1<7);
 		temp=Qsort_order[w][v-1];
