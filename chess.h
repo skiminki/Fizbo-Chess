@@ -2,6 +2,7 @@
 #ifndef FIZBO_CHESS_H_INCLUDED
 #define FIZBO_CHESS_H_INCLUDED
 
+#include <array>
 #include <cstdint>
 
 #include "bitutils.h"
@@ -16,7 +17,8 @@ using UINT64 = std::uint64_t;
 #define USE_EGTB 0		// 1
 #define ALLOW_LOG 0
 #define calc_pst 0		// 1=calculate in eval, 0=update incrementally. Here 0 is slightly faster - use that.
-#define player_zorb 0xab42094fee35f92e
+
+constexpr uint64_t player_zorb { 0xab42094fee35f92eU };
 
 #ifdef __AVX__
 #define USE_AVX 1		// this is 5% faster. Also turn off AVX2 compiler switch.
@@ -297,7 +299,10 @@ extern int endgame_weight_all_i[];
 extern unsigned char dist[64][64];
 extern short int piece_square[6][2][64][2]; // [piece][player][square][midgame(0)/endgame(1)]
 extern unsigned int depth0;
-extern UINT64 zorb[6][2][64]; // [piece][player][square]
+
+using ZobristArrayType = std::array<std::array<std::array<uint64_t, 64>, 2>, 6>;
+extern const ZobristArrayType zorb;
+
 extern int timeout;
 extern int timeout_complete;
 extern int time_start;

@@ -4,7 +4,6 @@
 #include "threads.h"
 
 // Global Variables:
-UINT64 zorb[6][2][64];					// zorbist keys: 12 pieces by 64 cells
 board b_m;								// global board - master
 short int piece_square[6][2][64][2];	// 6 pieces, 2 colors, 64 cells, 2 types = 12*64*2*2 bytes = 3K
 unsigned int depth0;					// depth0

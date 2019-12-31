@@ -18,14 +18,38 @@ namespace {
 
 	// We'll use the Visual C++ PRNG to get the same Zobrist keys for Fizbo-Linux
 	// and Fizbo on Windows. Here it is:
-	using VisualCppPRNG = std::linear_congruential_engine<uint_fast64_t, 214013, 2531011, uint64_t { 1 } << 32>;
-	VisualCppPRNG msRandom;
-
-	int ms_rand()
+	ZobristArrayType initZobristKeys()
 	{
-		return (msRandom() >> 16) & 0x7FFFU;
+		using VisualCppPRNG = std::linear_congruential_engine<uint_fast64_t, 214013, 2531011, uint64_t { 1 } << 32>;
+		VisualCppPRNG msRandom;
+
+		msRandom.seed(1678579445);
+
+		ZobristArrayType ret { };
+
+		for (size_t j = 0; j < 2; ++j) // player
+			for (size_t k = 0; k < 6; ++k) // piece
+				for (size_t i = 0; i < 64; ++i){ // square
+					uint64_t z = (msRandom() >> 16) & 0x7FFFU; // 1
+					z = (z<<15) ^ ((msRandom() >> 16) & 0x7FFFU); // 2
+					z = (z<<15) ^ ((msRandom() >> 16) & 0x7FFFU); // 3
+					z = (z<<15) ^ ((msRandom() >> 16) & 0x7FFFU); // 4
+					z = (z<<15) ^ ((msRandom() >> 16) & 0x7FFFU); // 5
+					ret[k][j][i]=z; // 15 bits each,x5= 75 bit total
+				}
+
+		// set pawn zorb to queen for promotion, so that i don't have to change it. But wil have to change pawn hash!
+		for (size_t i = 0; i < 64; i += 8 ){// square (in steps of 8)
+			ret[0][0][i+7]=ret[4][0][i+7];
+			ret[0][1][i]=ret[4][1][i];
+		}
+
+		return ret;
 	}
 }
+
+// zobrist keys: 12 pieces by 64 cells
+const ZobristArrayType zorb { initZobristKeys() };
 
 void int_m2(void);
 extern UINT64 *eh; // eval hash pointer
@@ -39,30 +63,6 @@ void clear_hash(unsigned int i){//0: TT only. >0: Pawn hash also.
 void init_hash(void){
 	static UINT64 *meml=NULL;
 	static unsigned int HBL=0,virt=0;
-	UINT64 z;
-	unsigned int i,j,k;
-	
-	// init zorbist keys
-	if( !HBL ){// only on first call.
-		msRandom.seed(1678579445);
-		memset(zorb,0,sizeof(zorb));
-		for(j=0;j<2;++j) // player
-			for(k=0;k<6;++k) // piece
-				for(i=0;i<64;++i){ // square
-					z=ms_rand();
-					z=(z<<15)^ms_rand();//2
-					z=(z<<15)^ms_rand();//3
-					z=(z<<15)^ms_rand();//4
-					z=(z<<15)^ms_rand();//5
-					zorb[k][j][i]=z; // 15 bits each,x5= 75 bit total
-				}
-
-		// set pawn zorb to queen for promotion, so that i don't have to change it. But wil have to change pawn hash!
-		for(i=0;i<64;i+=8){// square (in steps of 8)
-			zorb[0][0][i+7]=zorb[4][0][i+7];
-			zorb[0][1][i]=zorb[4][1][i];
-		}
-	}
 
 	// alloc memory
 	if( HBITS!=HBL ){
