@@ -80,6 +80,7 @@ typedef struct{
 #define MAX_MOVE_HIST 8			// how many moves to keep in PV history. 8.
 #define INVALID_LAST_MOVE 64	// 0 causes false positives with cell==b->last_move logic, so use 64.
 
+/*
 // board_light data structure
 typedef struct{
 	UINT64 hash_key;				// save 1 (8). transposition table key=8 8
@@ -99,9 +100,15 @@ typedef struct{
 	unsigned int mat_key;			// save 5 (8). 212
 	unsigned int piece_value;		// total piece value, 0 to 64. 216
 } board_light; // 216 bytes. Used in training only.
+*/
+
+
+// Square position. a1 = 0, a2 = 1, ..., b1 = 8, b2 = 9,... h8 = 63
+using SquareIndex = std::uint8_t;
+
 
 // board data structure
-typedef struct{
+struct board {
 	UINT64 hash_key;				// save 1 (8). transposition table key=8 8
 	UINT64 pawn_hash_key;			// save 2 (8). pawn transposition table key=8 16
 	UINT64 colorBB[2];				// bitboard for all pieces of both players: by player only=16 32
@@ -109,10 +116,16 @@ typedef struct{
 	unsigned char piece[64];		// cell values are: 0=empty, 1=pawn, 2=knight, 3=bishop, 4=rook, 5=queen, 6=king. 3 bits. Plus player as 2 top bits. Store byte=64 192
 	unsigned int castle;			// save 3 (8). castling possible: white lower(Q), white upper(K), black lower(q), black upper(k). 1=allowed, 0=not allowed. 196
 	#if calc_pst==0
-	short int scorem;
-	short int scoree;				// material scores. 200
+	union {
+		struct {
+			int16_t midgame;
+			int16_t endgame;				// material scores. 200
+		} score;
+		uint32_t score_m_and_e;		// accessor for both score fields for optimized +/- when we know that scorem/scoree won't overflow
+	};
+
 	#endif
-	unsigned char kp[2];			// save 4 (8). king position for both players. Addressable by player-1. 202
+	std::array<SquareIndex, 2> kp;          // save 4 (8). king position for both players. Addressable by player-1. 202
 	unsigned char player;			// player. 1/2. 203
 	unsigned char last_move;		// last move made to. 204
 	unsigned char halfmoveclock;	// for 50 move(100 halfmove) rule 205
@@ -140,66 +153,34 @@ typedef struct{
 	unsigned int slave_index;		// master is 0, slaves are 1+. Do not copy it to slaves.
 	unsigned int slave_index0;		// master is 0, slaves are 1+. Do not copy it to slaves.
 	unsigned char move_hist[MAX_MOVE_HIST][MAX_MOVE_HIST][2];// move history. Do not copy it to slaves. for 8: 2*8*8=128 bytes
-} board; // 216 bytes+threading=4,516 if MAX_MOVE_HIST=8.
+}; // 216 bytes+threading=4,516 if MAX_MOVE_HIST=8.
 
 // data structure for move un-make function
 typedef struct{
-	UINT64 hash_key;				// 8 transposition table key
+	UINT64 hash_key;			// 8 transposition table key
 	UINT64 pawn_hash_key;			// 16 pawn transposition table key
 	unsigned int castle;			// 20 castling possible: white lower(Q), white upper(K), black lower(q), black upper(k). 1=allowed, 0=not allowed.
-	short int scorem;
-	short int scoree;				// 24 material scores.
-	unsigned char kp[2];			// 26 king position for both players. Addressable by player-1.	
+	uint32_t score_m_and_e;                 // 24
+	std::array<SquareIndex, 2> kp;		// 26 king position for both players. Addressable by player-1.
 	unsigned char player;			// 27 player. 1/2.
 	unsigned char last_move;		// 28 last move made to.
-	unsigned char halfmoveclock;	// 29 for 50 move(100 halfmove) rule
-	unsigned int move_type;			// type of move: 0=quiet; 1=castling; 2=capture, including ep; 4=promotion; 8=ep capture. Combinations are allowed.
-	unsigned char w;				// piece captured
-	unsigned char cc;				// square where piece was captured (to/to1)
-	unsigned char from;				// from
-	unsigned char to;				// to
-	unsigned int mat_key;			// material key
-	unsigned int piece_value;		// total piece value, 0 to 64.
-	unsigned char promotion;		// 0-Q,1-R,2-B,3-N
-	unsigned char dummy[4];
+	unsigned char halfmoveclock;	        // 29 for 50 move(100 halfmove) rule
+	unsigned char nullmove;                 // 30
+	unsigned char padding[2];               // 32
+	unsigned int move_type;			// 36 - type of move: 0=quiet; 1=castling; 2=capture, including ep; 4=promotion; 8=ep capture. Combinations are allowed.
+	unsigned char w;			// 37 piece captured
+	unsigned char cc;			// 38 square where piece was captured (to/to1)
+	unsigned char from;			// 39 from
+	unsigned char to;			// 40 to
+	unsigned int mat_key;			// 44 material key
+	unsigned int piece_value;		// 48 total piece value, 0 to 64.
+	unsigned char promotion;		// 49 0-Q,1-R,2-B,3-N
+
+	// Note: there will be 7 bytes for alignment on 64-bit architectures
+
 } unmake; // 32+8+4+align=48 bytes
 
-// main transposition table data structure
-typedef struct{
-	unsigned short int lock2;		// 2 bytes of lock = 16
-	unsigned char lock1;			// 1 more byte of lock =24
-	unsigned char lock1a:2,			// 2 more bits of lock, for total lock size of 2*8+2=26 bits. = 26
-				  depth:6;			// 6 bits of depth: 0 to 63 = 32
-	short int score;				// 16 bits, score, +-10K. Need 15 bits to cover +-16K. = 48
-	unsigned char from:6,			// "from". Need 6 bits. Has to be immediately after "score" = 54
-				  type:2;			// score type: 0/1/2=exact,lower,upper. Need 2 bits. = 56
-	unsigned char to:6,				// "to". Need 6 bits. = 62
-				  age:2;			// age: 0 to 3. Need 2 bits. = 64
-} hash; // 8 bytes.
-
-// index into the main hash table
-#define get_hash_index ((b->hash_key&hash_index_mask)<<2) // always start at the beginning of block of 4 - 4-way set-associative structure - corrected
-
-// index into the eval hash table
-#define get_eval_hash_index (b->hash_key%EHSIZE)
-
-// size of pawn hash table
-#define PHSIZE (1024*512) // 1/2 Mill entries * 8 bytes= 4 Mb. Fits in L3 cache.
-//#define PHSIZE (1024*1024*4) // 4 Mill entries * 8 bytes= 32 Mb. For internet games and TCEC.
-
-// size of eval hash table
-#define EHSIZE (1024*512) // 1/2 Mill entries * 8 bytes= 4 Mb. Fits in L3 cache. Increasing this significantly improves runtime!
-//#define EHSIZE (1024*1024*32) // 32 Mill entries * 8 bytes=256 Mb. For internet games and TCEC.
-
-// transposition table return data structure
-typedef struct{
-	int alp;
-	int be;
-	int tt_score;
-	unsigned char move[2];		// from, to
-	unsigned char depth;
-	unsigned char bound_type;	// score type: 0/1/2=exact,lower,upper.
-} hash_data; // 16 bytes
+// static_assert(sizeof(unmake) == 56, "the actual size");
 
 // move data structure
 typedef struct{
@@ -248,19 +229,15 @@ void unmake_move(board *, const unmake *);
 unsigned int boards_are_the_same(board*,board*,unsigned char,unsigned char);
 int Msearch(board*,const int,const unsigned int,int,int,unsigned int);
 unsigned int get_piece_moves(board*,unsigned char*,unsigned char,unsigned int);
-void init_hash(void);
 void init_moves(void);
 void init_piece_square(void);
-void clear_hash(unsigned int);
-unsigned int lookup_hash(unsigned int,board*,hash_data*,unsigned int);
-void add_hash(int,int,int,unsigned char*,unsigned int,board*,unsigned int);
 unsigned int cell_under_attack(board*,unsigned int,unsigned char);
 unsigned int player_moved_into_check(board*,unsigned int,unsigned char);
 unsigned int print_position(char*,board *);
 UINT64 perft(board*,int);
 unsigned int move_is_legal(board*,unsigned char,unsigned char);
-UINT64 get_TT_hash_key(board*);
-UINT64 get_pawn_hash_key(board*);
+uint64_t get_TT_hash_key(board*);
+uint64_t get_pawn_hash_key(board*);
 unsigned int get_mat_key(board *);
 int get_piece_value(board *);
 void get_scores(board*);
@@ -288,11 +265,10 @@ unsigned int move_gives_check(board *,unsigned int,unsigned int);
 unsigned int moving_piece_is_pinned(board *,unsigned int,unsigned int,unsigned int);
 int f_timer(void);
 void pass_message_to_GUI(const char*);
-unsigned int hashfull(void);
+int16_t pass_forward_b(const board*);
 
 // vars
 extern FILE *f_log;
-extern UINT64 hash_index_mask;
 extern unsigned int HBITS;
 extern unsigned int TTage;
 extern int endgame_weight_all_i[];
@@ -320,8 +296,11 @@ extern const UINT64 passed_mask[];
 extern const UINT64 blocked_mask[];
 extern unsigned char dir_norm[64][64];
 extern const unsigned int mat_key_mult[];
-extern hash *h;
+
+
 extern const UINT64 pawn_attacks[2][64];
 extern unsigned int tb_loaded,UseEGTBInsideSearch,EGTBProbeLimit;
+
+
 
 #endif

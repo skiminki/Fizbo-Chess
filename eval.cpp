@@ -3,6 +3,7 @@
 #include <cstring>
 #include <math.h>
 #include "coeffs.h"
+#include "hash.h"
 
 UINT64 *eh; // eval hash pointer
 short int *mh; // material table pointer
@@ -292,18 +293,18 @@ const
 #endif
 unsigned short int convert2_3[256]={0,1,3,4,9,10,12,13,27,28,30,31,36,37,39,40,81,82,84,85,90,91,93,94,108,109,111,112,117,118,120,121,243,244,246,247,252,253,255,256,270,271,273,274,279,280,282,283,324,325,327,328,333,334,336,337,351,352,354,355,360,361,363,364,729,730,732,733,738,739,741,742,756,757,759,760,765,766,768,769,810,811,813,814,819,820,822,823,837,838,840,841,846,847,849,850,972,973,975,976,981,982,984,985,999,1000,1002,1003,1008,1009,1011,1012,1053,1054,1056,1057,1062,1063,1065,1066,1080,1081,1083,1084,1089,1090,1092,1093,2187,2188,2190,2191,2196,2197,2199,2200,2214,2215,2217,2218,2223,2224,2226,2227,2268,2269,2271,2272,2277,2278,2280,2281,2295,2296,2298,2299,2304,2305,2307,2308,2430,2431,2433,2434,2439,2440,2442,2443,2457,2458,2460,2461,2466,2467,2469,2470,2511,2512,2514,2515,2520,2521,2523,2524,2538,2539,2541,2542,2547,2548,2550,2551,2916,2917,2919,2920,2925,2926,2928,2929,2943,2944,2946,2947,2952,2953,2955,2956,2997,2998,3000,3001,3006,3007,3009,3010,3024,3025,3027,3028,3033,3034,3036,3037,3159,3160,3162,3163,3168,3169,3171,3172,3186,3187,3189,3190,3195,3196,3198,3199,3240,3241,3243,3244,3249,3250,3252,3253,3267,3268,3270,3271,3276,3277,3279,3280};
 // evaluation function
-short int pass_forward_b(board*);
 template <EvalType ET1> int evall(board *b){
 	#if TRAIN==0
 	volatile UINT64 *h1;
 	eTT h1d;
 	#endif
-	short *adj2;
-	UINT64 bb,bb_2,attack_mask,one,km[2],o,attacks[6][2];// 0=current, 1=pawns, 2=..., 3=P+N+B, 4=P+N+B+R, 5=P+N+B+R+Q. 0=white attacks black, 1=black attacks white.
+	constexpr uint64_t one { 1 };
+	UINT64 bb,bb_2,attack_mask,km[2],o,attacks[6][2];// 0=current, 1=pawns, 2=..., 3=P+N+B, 4=P+N+B+R, 5=P+N+B+R+Q. 0=white attacks black, 1=black attacks white.
 	uint32_t bit,bit2;
 	unsigned int d,king_attack_units[2],total_piece_value[2],index;
 	int sk;
-	short int sk2[2];
+
+	TwinScore16 sk2;
 
 	// look in eval hash table - only if not training set work
 	#if TRAIN==0
@@ -315,9 +316,8 @@ template <EvalType ET1> int evall(board *b){
 
 	data_prefetch((const char*)&ph[b->pawn_hash_key%PHSIZE]); // prefetch pawn hash
 	sk=mh[b->mat_key];// material key
-	((int*)sk2)[0]=0;//init
+	sk2.u32=0;//init
 	total_piece_value[0]=total_piece_value[1]=0;
-	one=1;// init
 
 	// comment out for training, uncomment for games
 	sk+=pass_forward_b(b); // add NN result
@@ -343,16 +343,42 @@ template <EvalType ET1> int evall(board *b){
 		GET_BIT(bb)
 		unsigned int color=b->piece[bit]>>7;	// 0/1
 		unsigned int type=b->piece[bit]&7;		// 1-6
-		if( bit<32){// none vs l/r flip: none
-			adj2=adj+O_KP+2*48*(bit*10+(type-2+color*5));						// 48 pawn squares, 10 piece types, mid+end. // piece: N/B/R/Q/K=0/1/2/3/4. n/b/r/q/k=5/6/7/8/9.
-			for(d=0;d<pw;++d) ((int*)sk2)[0]+=((int*)&adj2[pawns_wa[0][d]])[0]; // loop over W pawns
-			adj2=adj+O_KP+2*48*(flips[bit][1]*10+(type-2+5-color*5));			// 48 pawn squares, 10 piece types, mid+end. // piece: N/B/R/Q/K=0/1/2/3/4. n/b/r/q/k=5/6/7/8/9.
-			for(d=0;d<pb;++d) ((int*)sk2)[0]-=((int*)&adj2[pawns_ba[0][d]])[0]; // loop over W pawns
-		}else{// none vs l/r flip: l/r flip
-			adj2=adj+O_KP+2*48*(flips[bit][2]*10+(type-2+color*5));				// 48 pawn squares, 10 piece types, mid+end. // piece: N/B/R/Q/K=0/1/2/3/4. n/b/r/q/k=5/6/7/8/9.
-			for(d=0;d<pw;++d) ((int*)sk2)[0]+=((int*)&adj2[pawns_wa[1][d]])[0]; // loop over W pawns
-			adj2=adj+O_KP+2*48*(flips[bit][3]*10+(type-2+5-color*5));			// 48 pawn squares, 10 piece types, mid+end. // piece: N/B/R/Q/K=0/1/2/3/4. n/b/r/q/k=5/6/7/8/9.
-			for(d=0;d<pb;++d) ((int*)sk2)[0]-=((int*)&adj2[pawns_ba[1][d]])[0]; // loop over W pawns
+		short *adj2;
+
+		// none vs l/r flip
+		if (bit<32) {
+			// no flip
+
+			// 48 pawn squares, 10 piece types, mid+end. // piece: N/B/R/Q/K=0/1/2/3/4. n/b/r/q/k=5/6/7/8/9.
+			adj2=adj+O_KP+2*48*(bit*10+(type-2+color*5));
+
+			// loop over W pawns
+			for(d=0;d<pw;++d)
+				sk2.addFromTable(adj2, pawns_wa[0][d]);
+
+			// 48 pawn squares, 10 piece types, mid+end. // piece: N/B/R/Q/K=0/1/2/3/4. n/b/r/q/k=5/6/7/8/9.
+			adj2=adj+O_KP+2*48*(flips[bit][1]*10+(type-2+5-color*5));
+
+			// loop over W pawns
+			for(d=0;d<pb;++d)
+				sk2.subFromTable(adj2, pawns_ba[0][d]);
+
+		} else {
+			// l/r flip
+
+			// 48 pawn squares, 10 piece types, mid+end. // piece: N/B/R/Q/K=0/1/2/3/4. n/b/r/q/k=5/6/7/8/9.
+			adj2=adj+O_KP+2*48*(flips[bit][2]*10+(type-2+color*5));
+
+			// loop over W pawns
+			for(d=0;d<pw;++d)
+				sk2.addFromTable(adj2, pawns_wa[1][d]);
+
+			// 48 pawn squares, 10 piece types, mid+end. // piece: N/B/R/Q/K=0/1/2/3/4. n/b/r/q/k=5/6/7/8/9.
+			adj2=adj+O_KP+2*48*(flips[bit][3]*10+(type-2+5-color*5));
+
+			// loop over W pawns
+			for(d=0;d<pb;++d)
+				sk2.subFromTable(adj2, pawns_ba[1][d]);
 		}
 	}
 
@@ -361,14 +387,14 @@ template <EvalType ET1> int evall(board *b){
 	index=convert2_3[(b->colorBB[0]&0x101010101010101)*0x0102040810204080>>56];
 	index+=convert2_3[(b->colorBB[1]&0x101010101010101)*0x0102040810204080>>56]*2;// 6561
 	index=ind1[index];	
-	((int*)sk2)[0]+=((int*)&adj[O_R1+index*2])[0];
+	sk2.addFromTable(adj, O_R1+index*2);
 
 	// rank 8, B+2*W
 	// first, need to turn the board: make bits 7+0/8/16/24/32/40/48/56 into bits 0/1/2/3/4/5/6/7
 	index=convert2_3[((b->colorBB[1]>>7)&0x101010101010101)*0x0102040810204080>>56];
 	index+=convert2_3[((b->colorBB[0]>>7)&0x101010101010101)*0x0102040810204080>>56]*2;// 6561
 	index=ind1[index];
-	((int*)sk2)[0]-=((int*)&adj[O_R1+index*2])[0];
+	sk2.subFromTable(adj, O_R1+index*2);
 
 	#if LOG_STEPS
 	FILE *fl=fopen("c://xde//chess//out//eval_log.csv","a");
@@ -391,8 +417,8 @@ template <EvalType ET1> int evall(board *b){
 	o=b->colorBB[0]|b->colorBB[1];// occupied by either
 
 	#if calc_pst==1
-	((int*)sk2)[0]+=((int*)&piece_square[5][0][b->kp[0]][0])[0];// white K PST
-	((int*)sk2)[0]+=((int*)&piece_square[5][1][b->kp[1]][0])[0];// black K PST
+	sk2.u32+=((int*)&piece_square[5][0][b->kp[0]][0])[0];// white K PST
+	sk2.u32+=((int*)&piece_square[5][1][b->kp[1]][0])[0];// black K PST
 	#endif
 
 	// process pieces
@@ -408,17 +434,17 @@ template <EvalType ET1> int evall(board *b){
 			unsigned int index;
 			if( bit<32 ) index=bit+bit2*32;
 			else index=flips[bit][2]+flips[bit2][2]*32;// l-r only
-			((int*)sk2)[0]+=((int*)&adj[O_NB+index*2])[0];
+			sk2.addFromTable(adj, O_NB+index*2);
 		}
 
 		#if calc_pst==1
-		((int*)sk2)[0]+=((int*)&piece_square[1][0][bit][0])[0];// white N PST
+		sk2.u32+=((int*)&piece_square[1][0][bit][0])[0];// white N PST
 		#endif
 		attack_mask=knight_masks[bit];
 		attacks[0][0]|=attack_mask;
 		d=(unsigned int)popcnt64l(attack_mask&~(attacks[1][1]|b->colorBB[0])); // exclude occupied/attacked cells
 		if( ET1==Full ) king_attack_units[1]+=2*(unsigned int)popcnt64l(attack_mask&km[1]); // black king attack units - 2 for knights
-		((int*)sk2)[0]+=((int*)&adj[O_N_MOB+d*2])[0];
+		sk2.addFromTable(adj, O_N_MOB+d*2);
 		//((int*)sk2)[0]+=((int*)&adj[O_N_MOB2+2*(d*32+flips[bit][(bit>>4)&2])])[0]; // mob2
 		#if TRAIN
 		pawn_deriv_coeffs[0+d]++;// knight mob
@@ -463,18 +489,18 @@ template <EvalType ET1> int evall(board *b){
 			unsigned int index;
 			if( bit<32 ) index=flips[bit][1]+flips[bit2][1]*32;// w-b only
 			else index=flips[bit][3]+flips[bit2][3]*32;// w-b and l-r
-			((int*)sk2)[0]-=((int*)&adj[O_NB+index*2])[0];
+			sk2.subFromTable(adj, O_NB+index*2);
 		}
 
 		#if calc_pst==1
-		((int*)sk2)[0]+=((int*)&piece_square[1][1][bit][0])[0];// black N PST
+		sk2.u32+=((int*)&piece_square[1][1][bit][0])[0];// black N PST
 		#endif
 		attack_mask=knight_masks[bit];
 		attacks[0][1]|=attack_mask;
 		d=(unsigned int)popcnt64l(attack_mask&~(attacks[1][0]|b->colorBB[1])); // exclude occupied/attacked cells
 		if( ET1==Full ) king_attack_units[0]+=2*(unsigned int)popcnt64l(attack_mask&km[0]);// white king attack units - 2 for knights
 		total_piece_value[1]+=3;
-		((int*)sk2)[0]-=((int*)&adj[O_N_MOB+d*2])[0];
+		sk2.subFromTable(adj, O_N_MOB+d*2);
 		//((int*)sk2)[0]-=((int*)&adj[O_N_MOB2+2*(d*32+flips[bit][1+((bit>>4)&2)])])[0]; // mob2
 		#if TRAIN
 		pawn_deriv_coeffs[0+d]--;// knight mob
@@ -518,7 +544,7 @@ template <EvalType ET1> int evall(board *b){
 	while( bb ){// loop over white bishops
 		GET_BIT(bb)
 		#if calc_pst==1
-		((int*)sk2)[0]+=((int*)&piece_square[2][0][bit][0])[0];// white B PST
+		sk2.u32+=((int*)&piece_square[2][0][bit][0])[0];// white B PST
 		#endif
 
 		// bonus for bishop pinning queen or king: +4 ELO
@@ -527,12 +553,12 @@ template <EvalType ET1> int evall(board *b){
 			GET_BIT2(bb_2)
 			if( popcnt64l(ray_segment[bit][bit2]&o)==1 ){// exactly 1 blocker.
 				if( bishop_masks[bit]&b->piececolorBB[4][1] ){// queen
-					((int*)sk2)[0]+=((int*)&adj[O_B_PIN])[0];
+					sk2.addFromTable(adj, O_B_PIN);
 					#if TRAIN
 					pawn_deriv_coeffs[184]++;// B pin Q
 					#endif
 				}else{// king
-					((int*)sk2)[0]+=((int*)&adj[O_B_PIN+2])[0];
+					sk2.addFromTable(adj, O_B_PIN+2);
 					#if TRAIN
 					pawn_deriv_coeffs[185]++;// B pin K
 					#endif
@@ -544,7 +570,7 @@ template <EvalType ET1> int evall(board *b){
 		attacks[0][0]|=attack_mask;
 		d=(unsigned int)popcnt64l(attack_mask&~(attacks[1][1]|b->colorBB[0])); // exclude occupied/attacked cells
 		if( ET1==Full ) king_attack_units[1]+=2*(unsigned int)popcnt64l(attack_mask&km[1]);// black king attack units - 2 for bishops
-		((int*)sk2)[0]+=((int*)&adj[O_B_MOB+d*2])[0];
+		sk2.addFromTable(adj, O_B_MOB+d*2);
 		#if TRAIN
 		pawn_deriv_coeffs[9+d]++;// bishop mob
 		#endif
@@ -553,7 +579,7 @@ template <EvalType ET1> int evall(board *b){
 	while( bb ){// loop over black bishops
 		GET_BIT(bb)
 		#if calc_pst==1
-		((int*)sk2)[0]+=((int*)&piece_square[2][1][bit][0])[0];// black B PST
+		sk2.u32+=((int*)&piece_square[2][1][bit][0])[0];// black B PST
 		#endif
 
 		// bonus for bishop pinning queen or king: +4 ELO
@@ -562,12 +588,12 @@ template <EvalType ET1> int evall(board *b){
 			GET_BIT2(bb_2)
 			if( popcnt64l(ray_segment[bit][bit2]&o)==1 ){// exactly 1 blocker.
 				if( bishop_masks[bit]&b->piececolorBB[4][0] ){// queen
-					((int*)sk2)[0]-=((int*)&adj[O_B_PIN])[0];
+					sk2.subFromTable(adj, O_B_PIN);
 					#if TRAIN
 					pawn_deriv_coeffs[184]--;// B pin Q
 					#endif
 				}else{// king
-					((int*)sk2)[0]-=((int*)&adj[O_B_PIN+2])[0];
+					sk2.subFromTable(adj, O_B_PIN+2);
 					#if TRAIN
 					pawn_deriv_coeffs[185]--;// B pin K
 					#endif
@@ -580,7 +606,7 @@ template <EvalType ET1> int evall(board *b){
 		d=(unsigned int)popcnt64l(attack_mask&~(attacks[1][0]|b->colorBB[1])); // exclude occupied/attacked cells
 		if( ET1==Full ) king_attack_units[0]+=2*(unsigned int)popcnt64l(attack_mask&km[0]);// white king attack units - 2 for bishops
 		total_piece_value[1]+=3;
-		((int*)sk2)[0]-=((int*)&adj[O_B_MOB+d*2])[0];
+		sk2.subFromTable(adj, O_B_MOB+d*2);
 		#if TRAIN
 		pawn_deriv_coeffs[9+d]--;// bishop mob
 		#endif
@@ -595,7 +621,7 @@ template <EvalType ET1> int evall(board *b){
 	while( bb ){// loop over white rooks
 		GET_BIT(bb)
 		#if calc_pst==1
-		((int*)sk2)[0]+=((int*)&piece_square[3][0][bit][0])[0];// white R PST
+		sk2.u32+=((int*)&piece_square[3][0][bit][0])[0];// white R PST
 		#endif
 	
 		// bonus for rook pinning queen or king: +1 ELO
@@ -621,7 +647,7 @@ template <EvalType ET1> int evall(board *b){
 
 		// rook protecting other rook: +4 ELO
 		if( attack_mask&bb ){
-			((int*)sk2)[0]+=((int*)&adj[O_RPOR])[0];
+			sk2.addFromTable(adj, O_RPOR);
 			#if TRAIN
 			pawn_deriv_coeffs[207]++;// rook protecting other rook
 			#endif
@@ -630,7 +656,7 @@ template <EvalType ET1> int evall(board *b){
 		attacks[0][0]|=attack_mask;
 		d=(unsigned int)popcnt64l(attack_mask&~(attacks[3][1]|b->colorBB[0])); // exclude occupied/attacked cells
 		if( ET1==Full ) king_attack_units[1]+=4*(unsigned int)popcnt64l(attack_mask&km[1]);// black king attack units - X for rooks
-		((int*)sk2)[0]+=((int*)&adj[O_R_MOB+d*2])[0];
+		sk2.addFromTable(adj, O_R_MOB+d*2);
 		#if TRAIN
 		pawn_deriv_coeffs[23+d]++;// rook mob
 		#endif		
@@ -639,7 +665,7 @@ template <EvalType ET1> int evall(board *b){
 	while( bb ){// loop over black rooks
 		GET_BIT(bb)
 		#if calc_pst==1
-		((int*)sk2)[0]+=((int*)&piece_square[3][1][bit][0])[0];// black R PST
+		sk2.u32+=((int*)&piece_square[3][1][bit][0])[0];// black R PST
 		#endif
 
 		// bonus for rook pinning queen or king: +1 ELO
@@ -665,7 +691,7 @@ template <EvalType ET1> int evall(board *b){
 
 		// rook protecting other rook: +4 ELO
 		if( attack_mask&bb ){
-			((int*)sk2)[0]-=((int*)&adj[O_RPOR])[0];
+			sk2.subFromTable(adj, O_RPOR);
 			#if TRAIN
 			pawn_deriv_coeffs[207]--;// rook protecting other rook
 			#endif
@@ -675,7 +701,7 @@ template <EvalType ET1> int evall(board *b){
 		d=(unsigned int)popcnt64l(attack_mask&~(attacks[3][0]|b->colorBB[1])); // exclude occupied/attacked cells
 		if( ET1==Full) king_attack_units[0]+=4*(unsigned int)popcnt64l(attack_mask&km[0]);// white king attack units - X for rooks
 		total_piece_value[1]+=5;
-		((int*)sk2)[0]-=((int*)&adj[O_R_MOB+d*2])[0];
+		sk2.subFromTable(adj, O_R_MOB+d*2);
 		#if TRAIN
 		pawn_deriv_coeffs[23+d]--;// rook mob
 		#endif
@@ -691,7 +717,7 @@ template <EvalType ET1> int evall(board *b){
 	while( bb ){// loop over white queens
 		GET_BIT(bb)
 		#if calc_pst==1
-		((int*)sk2)[0]+=((int*)&piece_square[4][0][bit][0])[0];// white Q PST
+		sk2.u32+=((int*)&piece_square[4][0][bit][0])[0];// white Q PST
 		#endif
 
 		attack_mask=attacks_bb_B(bit,o)|attacks_bb_R(bit,o);
@@ -721,7 +747,7 @@ template <EvalType ET1> int evall(board *b){
 		d=(unsigned int)popcnt64l(attack_mask&aaa); // exclude occupied/attacked cells
 		attacks[0][0]|=attack_mask;// add queens to total attack
 		king_attack_units[1]+=3*(unsigned int)popcnt64l(attack_mask&km[1]);// black king attack units - 5 for queens
-		((int*)sk2)[0]+=((int*)&adj[O_Q_MOB+d*2])[0];
+		sk2.addFromTable(adj, O_Q_MOB+d*2);
 		#if TRAIN
 		pawn_deriv_coeffs[38+d]++;// queen mob
 		#endif
@@ -733,7 +759,7 @@ template <EvalType ET1> int evall(board *b){
 	while( bb ){// loop over black queens
 		GET_BIT(bb)
 		#if calc_pst==1
-		((int*)sk2)[0]+=((int*)&piece_square[4][1][bit][0])[0];// black Q PST
+		sk2.u32+=((int*)&piece_square[4][1][bit][0])[0];// black Q PST
 		#endif
 
 		attack_mask=attacks_bb_B(bit,o)|attacks_bb_R(bit,o);
@@ -760,7 +786,7 @@ template <EvalType ET1> int evall(board *b){
 		attacks[0][1]|=attack_mask;// add queens to total attack
 		king_attack_units[0]+=3*(unsigned int)popcnt64l(attack_mask&km[0]);// white king attack units - 5 for queens
 		total_piece_value[1]+=10;
-		((int*)sk2)[0]-=((int*)&adj[O_Q_MOB+d*2])[0];
+		sk2.subFromTable(adj, O_Q_MOB+d*2);
 		#if TRAIN
 		pawn_deriv_coeffs[38+d]--;// queen mob
 		#endif
@@ -1235,7 +1261,7 @@ template <EvalType ET1> int evall(board *b){
 	#if TRAIN
 	if( use_hash==1 ){
 	#endif
-	((int*)sk2)[0]+=pawn_score(b);
+	sk2.u32+=pawn_score(b);
 	#if TRAIN
 	}
 	#endif
@@ -1246,12 +1272,12 @@ template <EvalType ET1> int evall(board *b){
 
 	// combine m and e scores
 	if( b->player==2 ){// change sign for black for all "sk" vars
-		((int*)sk2)[0]=-((int*)sk2)[0];
+		sk2.u32=-sk2.u32;
 		sk=-sk;
 	}
 	#if calc_pst==1
 	#else
-	((int*)sk2)[0]+=((int*)&b->scorem)[0];
+	sk2.u32+=b->score_m_and_e;
 	#endif
 	
 	#if LOG_STEPS
@@ -1259,7 +1285,7 @@ template <EvalType ET1> int evall(board *b){
 	else fprintf(fl,"add PST,%d,%d,%d\n",-sk,-sk2[0],-sk2[1]);
 	#endif
 
-	sk+=sk2[0]+(((sk2[1]-sk2[0])*endgame_weight_all_i[b->piece_value])>>10); // blend
+	sk += sk2.blendByEndgameWeight(endgame_weight_all_i[b->piece_value]);
 
 	// apply multiple
 	//sk=(sk*(1024+mh2[b->mat_key]))/1024;

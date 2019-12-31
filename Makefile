@@ -26,6 +26,7 @@ ALL-DEPS := $(patsubst %.cpp,.deps/%.d,$(FIZBO-SRC) $(UNIT-TESTS-SRC))
 
 EXTRAFLAGS := -DNDEBUG
 CXXFLAGS := -Wall -Wpedantic -O3 -flto -ggdb -std=c++17 -march=native -pthread $(EXTRAFLAGS)
+LIBS :=  -latomic
 
 all: fizbo unit-tests
 
@@ -42,8 +43,8 @@ realclean: clean
 include $(wildcard $(ALL-DEPS))
 
 fizbo: $(FIZBO-OBJ)
-	$(CXX) $(CXXFLAGS) -o $@ $(FIZBO-OBJ)
+	$(CXX) $(CXXFLAGS) $(LIBS) -o $@ $(FIZBO-OBJ)
 
 # we'll use -shared here to expose all those inspect symbols
 unit-tests: $(UNIT-TESTS-OBJ)
-	$(CXX) $(CXXFLAGS) -shared -o $@ $(UNIT-TESTS-OBJ)
+	$(CXX) $(CXXFLAGS) $(LIBS) -o $@ $(UNIT-TESTS-OBJ)

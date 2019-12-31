@@ -1,5 +1,6 @@
 // board utilities
 #include "chess.h"
+#include "hash.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -38,7 +39,12 @@ const UINT64 pawn_attacks[2][64]={{			// cell attacked by white/black pawns
 	0x0002000200000000,0x0004000400000000,0x0008000800000000,0x0010001000000000,0x0020002000000000,0x0040004000000000,0x0080008000000000,0x0000000000000000,
 	0x0200020000000000,0x0400040000000000,0x0800080000000000,0x1000100000000000,0x2000200000000000,0x4000400000000000,0x8000800000000000,0x0000000000000000,
 	0x0002000000000000,0x0004000000000000,0x0008000000000000,0x0010000000000000,0x0020000000000000,0x0040000000000000,0x0080000000000000,0x0000000000000000}};
-static const unsigned int dir_trans[]={0,1,0,0,0,0,0,2,3,4}; // translate direction from 1/7/8/9 to 1/2/3/4
+
+namespace
+{
+	constexpr unsigned int dir_trans[]={0,1,0,0,0,0,0,2,3,4}; // translate direction from 1/7/8/9 to 1/2/3/4
+
+}
 
 void init_moves(void){
 	unsigned int i,j,k;
@@ -1038,15 +1044,15 @@ void unmake_null_move(board *b){// null move: change player, score and TT hash k
 	b->hash_key^=player_zorb;	// flip player
 	b->player=3-b->player;		// switch player
 	#if calc_pst==0
-	b->scorem=-b->scorem;		// change score2
-	b->scoree=-b->scoree;		// change score2
+	b->score.midgame = -b->score.midgame;
+	b->score.endgame = -b->score.endgame;
 	#endif
 }
 
 void make_null_move(board *b){// null move: change player, score and TT hash key
 	unmake_null_move(b);
 	#if USE_PREFETCH
-	data_prefetch((const char*)&h[get_hash_index]); // prefetch the main hash
+	data_prefetch(&h[getHashIndex(b->hash_key)]);
 	#endif
 }
 
@@ -1056,15 +1062,20 @@ void make_move(board *b,unsigned char from,unsigned char to,unmake *d)
 	UINT64 z,zp,one=1,ToBB=(one<<to),fromToBB;
 	const unsigned int pll=b->player-1;	// now player is 0/1. Use ^1 to invert.
 	#if calc_pst==0
-	int sl4;						// local scores
+	// int sl4;
+	TwinScore16 sl4; // local scores
 	#endif
-	const unsigned char v=b->piece[from];	// get piece to move
-	const unsigned char w=b->piece[to];	// get piece replaced
+	const unsigned char v = b->piece[from];	// get piece to move
+	const unsigned char w = b->piece[to];	// get piece replaced
 	const unsigned int fromPieceIndex { (v & 7U) - 1U};
 
-	// save un-make data - 40 bytes including fillers
-	d->hash_key=b->hash_key;								// save 8 bytes - main hash.
-	((UINT64*)&d->kp[0])[0]=((UINT64*)&b->kp[0])[0];		// save 8 bytes - kp[2], player, last move, halfmoveclock. 5 bytes. Plus filler(3).
+	// save un-make data
+	d->hash_key      = b->hash_key;      // save 8 bytes - main hash.
+	d->kp            = b->kp;
+	d->player        = b->player;
+	d->last_move     = b->last_move;
+	d->halfmoveclock = b->halfmoveclock;
+	d->nullmove      = b->nullmove;
 
 	// Z key update
 	z=zorb[fromPieceIndex][pll][to];		// update Z key for "to", new piece. Here piece is never empty!
@@ -1077,15 +1088,17 @@ void make_move(board *b,unsigned char from,unsigned char to,unmake *d)
 	if( !w ){// no capture - prefetch now!
 		b->hash_key^=z^player_zorb;	// flip player;
 		#if USE_PREFETCH
-		data_prefetch((const char*)&h[get_hash_index]); // prefetch the main hash
-		data_prefetch((const char*)&eh[get_eval_hash_index]); // prefetch eval hash
+		data_prefetch(&h[getHashIndex(b->hash_key)]); // prefetch the main hash
+		data_prefetch(&eh[get_eval_hash_index]); // prefetch eval hash
 		#endif
 	}
 
 	// save un-make data - 40 bytes including fillers
-	d->pawn_hash_key=b->pawn_hash_key;						// save 8 bytes - pawn hash.
-	((UINT64*)&d->castle)[0]=((UINT64*)&b->castle)[0];		// save 8 bytes - castle and scores.
-	((UINT64*)&d->mat_key)[0]=((UINT64*)&b->mat_key)[0];	// save 8 bytes - material hash+piece value
+	d->pawn_hash_key = b->pawn_hash_key;						// save 8 bytes - pawn hash.
+	d->castle = b->castle;
+	d->score_m_and_e = b->score_m_and_e;
+	d->mat_key = b->mat_key;
+	d->piece_value = b->piece_value;
 
 	// assign some un-make vars
 	d->move_type=0;			// move type is quiet
@@ -1095,8 +1108,8 @@ void make_move(board *b,unsigned char from,unsigned char to,unmake *d)
 
 	// score update
 	#if calc_pst==0
-	sl4=((int*)&piece_square[fromPieceIndex][pll][to][0])[0];	// add new "to". Here piece is never empty!
-	sl4-=((int*)&piece_square[fromPieceIndex][pll][from][0])[0];// remove current "from". Here piece is never empty!
+	sl4  = piece_square[fromPieceIndex][pll][to];	// add new "to". Here piece is never empty!
+	sl4 -= piece_square[fromPieceIndex][pll][from];// remove current "from". Here piece is never empty!
 	#endif
 
 	if (w) {// capture.
@@ -1105,14 +1118,14 @@ void make_move(board *b,unsigned char from,unsigned char to,unmake *d)
 		const uint64_t zz=zorb[toPieceIndex][opponent][to];
 		b->hash_key^=z^player_zorb^zz;				// update Z key for "to", old. Only for captures. Here piece is never empty!. flip player;
 		#if USE_PREFETCH
-		data_prefetch(&h[get_hash_index]); // prefetch the main hash
+		data_prefetch(&h[getHashIndex(b->hash_key)]); // prefetch the main hash
 		data_prefetch(&eh[get_eval_hash_index]); // prefetch eval hash
 		#endif
 		zp=(v&7)==1?z:0;							// Zp=Z, if pawn move. This has to be before application of "wi".
 		zp^=(w&7)==1?zz:0;							// update Zp key for "to", old. Only for captures.
 		b->pawn_hash_key^=zp;
 		#if calc_pst==0
-		sl4-=((int*)&piece_square[toPieceIndex][opponent][to][0])[0];	// remove current "to". Only for captures. Here piece is never empty!
+		sl4 -= piece_square[toPieceIndex][opponent][to];	// remove current "to". Only for captures. Here piece is never empty!
 		#endif
 		b->mat_key-=mat_key_mult[toPieceIndex * 2U + opponent];			// remove captured piece from material key
 		d->move_type=2;								// move type is capture
@@ -1134,13 +1147,13 @@ void make_move(board *b,unsigned char from,unsigned char to,unmake *d)
 					to1=from-8;
 				b->hash_key^=zorb[0][pll^1][to1];			// update Z key for deleted pawn. Here piece is never empty!
 				#if USE_PREFETCH
-				data_prefetch((const char*)&h[get_hash_index]); // prefetch the main hash
+				data_prefetch(&h[getHashIndex(b->hash_key)]); // prefetch the main hash
 				data_prefetch((const char*)&eh[get_eval_hash_index]); // prefetch eval hash
 				#endif
 				zp^=zorb[0][pll^1][to1];					// update ZP key for deleted pawn.
 				b->mat_key-=mat_key_mult[pll^1];			// remove captured pawn from material key
 				#if calc_pst==0
-				sl4-=((int*)&piece_square[0][pll^1][to1][0])[0];	// update score for deleted pawn. Here piece is never empty!
+				sl4-=piece_square[0][pll^1][to1];	// update score for deleted pawn. Here piece is never empty!
 				#endif
 				d->move_type=2+8;							// move type is (ep) capture. Add 8 here.
 				d->w=b->piece[to1];							// piece captured
@@ -1159,8 +1172,8 @@ void make_move(board *b,unsigned char from,unsigned char to,unmake *d)
 					assert(b->last_move<64 && (b->last_move&7)==2 || (b->last_move&7)==5);
 					b->hash_key^=last_move_hash_adj;
 					#if USE_PREFETCH
-					data_prefetch((const char*)&h[get_hash_index]); // prefetch the main hash
-					data_prefetch((const char*)&eh[get_eval_hash_index]); // prefetch eval hash
+					data_prefetch(&h[getHashIndex(b->hash_key)]); // prefetch the main hash
+					data_prefetch(&eh[get_eval_hash_index]); // prefetch eval hash
 					#endif
 				}
 			}
@@ -1198,8 +1211,8 @@ void make_move(board *b,unsigned char from,unsigned char to,unmake *d)
 			b->piece_value+=pv10[5-d->promotion];	// update total piece value
 			if( d->promotion ){
 				#if calc_pst==0
-				sl4-=((int*)&piece_square[4][pll][to][0])[0];	// remove Q
-				sl4+=((int*)&piece_square[4-d->promotion][pll][to][0])[0];	// add X
+				sl4-=piece_square[4][pll][to];	// remove Q
+				sl4+=piece_square[4-d->promotion][pll][to];	// add X
 				#endif
 				b->hash_key^=zorb[4][pll][to];			// remove queen from main hash
 				b->hash_key^=zorb[4-d->promotion][pll][to];	// add X to main hash
@@ -1215,8 +1228,8 @@ void make_move(board *b,unsigned char from,unsigned char to,unmake *d)
 				set_piece(b,24,64+4);				// place rook where it belongs
 				set_piece(b,0,0);					// clear it in the old place
 				#if calc_pst==0
-				sl4+=((int*)&piece_square[3][0][24][0])[0];	// place rook where it belongs
-				sl4-=((int*)&piece_square[3][0][0][0])[0];	// clear it in the old place
+				sl4+=piece_square[3][0][24];	// place rook where it belongs
+				sl4-=piece_square[3][0][0];	// clear it in the old place
 				#endif
 				UINT64 m=(one<<0)^(one<<24);
 				b->colorBB[0]^=m;					// update occupied BB of player - move rook
@@ -1228,8 +1241,8 @@ void make_move(board *b,unsigned char from,unsigned char to,unmake *d)
 				set_piece(b,40,64+4);				// place rook where it belongs
 				set_piece(b,56,0);					// clear it in the old place
 				#if calc_pst==0
-				sl4+=((int*)&piece_square[3][0][40][0])[0];	// place rook where it belongs
-				sl4-=((int*)&piece_square[3][0][56][0])[0];	// clear it in the old place
+				sl4+=piece_square[3][0][40];	// place rook where it belongs
+				sl4-=piece_square[3][0][56];	// clear it in the old place
 				#endif
 				UINT64 m=(one<<40)^(one<<56);
 				b->colorBB[0]^=m;					// update occupied BB of player - move rook
@@ -1243,8 +1256,8 @@ void make_move(board *b,unsigned char from,unsigned char to,unmake *d)
 				set_piece(b,31,128+4);				// place rook where it belongs
 				set_piece(b,7,0);					// clear it in the old place
 				#if calc_pst==0
-				sl4+=((int*)&piece_square[3][1][31][0])[0];	// place rook where it belongs
-				sl4-=((int*)&piece_square[3][1][7][0])[0];	// clear it in the old place
+				sl4+=piece_square[3][1][31];	// place rook where it belongs
+				sl4-=piece_square[3][1][7];	// clear it in the old place
 				#endif
 				UINT64 m=(one<<7)^(one<<31);
 				b->colorBB[1]^=m;					// update occupied BB of player - move rook
@@ -1256,8 +1269,8 @@ void make_move(board *b,unsigned char from,unsigned char to,unmake *d)
 				set_piece(b,47,128+4);				// place rook where it belongs
 				set_piece(b,63,0);					// clear it in the old place
 				#if calc_pst==0
-				sl4+=((int*)&piece_square[3][1][47][0])[0];	// place rook where it belongs
-				sl4-=((int*)&piece_square[3][1][63][0])[0];	// clear it in the old place
+				sl4+=piece_square[3][1][47];	// place rook where it belongs
+				sl4-=piece_square[3][1][63];	// clear it in the old place
 				#endif
 				UINT64 m=(one<<47)^(one<<63);
 				b->colorBB[1]^=m;					// update occupied BB of player - move rook
@@ -1271,9 +1284,9 @@ void make_move(board *b,unsigned char from,unsigned char to,unmake *d)
 	// return score for the player.
 	#if calc_pst==0
 	if( pll ) // black moves
-		((int*)&b->scorem)[0]=-((int*)&b->scorem)[0]+sl4;
+		b->score_m_and_e = -b->score_m_and_e + sl4.u32;
 	else // white moves
-		((int*)&b->scorem)[0]=-((int*)&b->scorem)[0]-sl4;
+		b->score_m_and_e = -b->score_m_and_e - sl4.u32;
 	#endif
 }
 
@@ -1282,9 +1295,18 @@ void unmake_move(board *b, const unmake *d){
 	// restore un-make data - 40 bytes including fillers
 	b->hash_key=d->hash_key;								// 8 bytes
 	b->pawn_hash_key=d->pawn_hash_key;						// 8 bytes
-	((UINT64*)&b->castle)[0]=((UINT64*)&d->castle)[0];		// 8 bytes - castle and scores.
-	((UINT64*)&b->kp[0])[0]=((UINT64*)&d->kp[0])[0];		// 8 bytes - kp[2], player, last move, halfmoveclock. 5 bytes. Plus filler.
-	((UINT64*)&b->mat_key)[0]=((UINT64*)&d->mat_key)[0];	// 8 bytes - material hash+piece value
+
+	b->castle = d->castle;
+	b->score_m_and_e = d->score_m_and_e;
+
+	b->kp            = d->kp;
+	b->player        = d->player;
+	b->last_move     = d->last_move;
+	b->halfmoveclock = d->halfmoveclock;
+	b->nullmove      = d->nullmove;
+
+	b->mat_key = d->mat_key;
+	b->piece_value = d->piece_value;
 
 	// define bitmasks
 	constexpr uint64_t one { 1 };

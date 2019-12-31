@@ -1,6 +1,7 @@
 #include <cstring>
 
 #include "chess.h"
+#include "hash.h"
 #include "threads.h"
 
 // Global Variables:
@@ -80,14 +81,14 @@ NOINLINE void get_scores(board *b){
 	if( b->player==2 ){
 		//assert(b->scorem==0?1:abs(-sm-b->scorem)<=ACCEPT_SCORE_DIFF);	
 		//assert(b->scoree==0?1:abs(-se-b->scoree)<=ACCEPT_SCORE_DIFF);	
-		b->scorem=-sm;
-		b->scoree=-se;
+		b->score.midgame=-sm;
+		b->score.endgame=-se;
 		//return(-sm);
 	}else{
 		//assert(b->scorem==0?1:abs(sm-b->scorem)<=ACCEPT_SCORE_DIFF);	
 		//assert(b->scoree==0?1:abs(se-b->scoree)<=ACCEPT_SCORE_DIFF);	
-		b->scorem=sm;
-		b->scoree=se;
+		b->score.midgame=sm;
+		b->score.endgame=se;
 		//return(sm);
 	}
 }
@@ -641,12 +642,13 @@ void init_all(unsigned int mode){// mode=1 is for training only: pass adj[] into
 		// init thread objects
 		// InitializeSRWLock(&L1);													// lock on split-points
 		// InitializeConditionVariable(&CV1);										// slave is allowed to run
-		sp_all=(split_point_type*)malloc(sizeof(split_point_type)*MAX_SP_NUM);	// all split-points; allocate MAX_SP_NUM slots
+		//sp_all=(split_point_type*)malloc(sizeof(split_point_type)*MAX_SP_NUM);	// all split-points; allocate MAX_SP_NUM slots
+		sp_all = new split_point_type[MAX_SP_NUM];
+
 		if( sp_all==NULL ) exit(123);
-		memset(sp_all,0,sizeof(split_point_type)*MAX_SP_NUM);
+
 		for(i=0;i<MAX_SP_NUM;++i){
-			sp_all[i].lock.release();						// release the lock on split-point
-			// InitializeConditionVariable(&sp_all[i].CVsp);	// sp is finished, wake up master
+			::new (static_cast<void *>(&sp_all[i])) split_point_type { };
 		}
 		init_threads(Threads-1);												// init threads.
 	}

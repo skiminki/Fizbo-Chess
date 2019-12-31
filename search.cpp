@@ -4,6 +4,7 @@
 #include "chess.h"
 #include <math.h>
 #include "threads.h"
+#include "hash.h"
 #include <xmmintrin.h>
 
 void pass_message_to_GUI(const char *);
@@ -900,7 +901,7 @@ top_of_the_move_loop:// end of top logic, excluded by slave ********************
 
 		if( ((short int*)m_excl_l)[0]==((short int*)&mo.from)[0] ) // skip excluded move
 			continue;
-		
+
 		// pass current move to GUI
 		#if ENGINE
 		if( ply==0 && depth>14 && !b->slave_index && get_time()-time_start>3000 ){// at least 3 secs and depth 15
@@ -909,7 +910,7 @@ top_of_the_move_loop:// end of top logic, excluded by slave ********************
 			pass_message_to_GUI(sss);
 		}
 		#endif
-		
+
 		// See if i'm in check after the move
 		if( mo.from==kp0 ){
 			b->colorBB[player-1]^=KBB;					// update occupied BB of player. here i only need to remove the king from its current position on colorBB board.
@@ -947,10 +948,12 @@ top_of_the_move_loop:// end of top logic, excluded by slave ********************
 
 				const auto &pstFromPlayer { piece_square[fromPieceIndex][playerIndex] };
 
-				const int sm = pstFromPlayer[mo.to][0] - pstFromPlayer[mo.from][0];
-				const int se = pstFromPlayer[mo.to][1] - pstFromPlayer[mo.from][1];
+				TwinScore16 smAndSe ( pstFromPlayer[mo.to][0] - pstFromPlayer[mo.from][0],
+						      pstFromPlayer[mo.to][1] - pstFromPlayer[mo.from][1] );
 
-				const int score = sm + (((se-sm)*endgame_weight_all_i[b->piece_value])>>10); // blended
+				const int32_t score { smAndSe.blendByEndgameWeight(endgame_weight_all_i[b->piece_value]) };
+
+				// const int score = sm + (((se-sm)*endgame_weight_all_i[b->piece_value])>>10); // blended
 
 				if (score<alp_in-FU[new_depth-1]-stand_pat-40) {
 					if( !bm->legal_moves ) bm->legal_moves=1;	// count legal move.
@@ -1288,27 +1291,32 @@ top_of_the_move_loop:// end of top logic, excluded by slave ********************
 int see_move(board *b,unsigned int from,unsigned int cell){// static exchange evaluator version 3 - return score for the player. The move has not been played. This is called 0.63 times per node.
 	UINT64 attackerBB,a,past_attacks,o=b->colorBB[0]|b->colorBB[1],aB,aR,bb,no_from=(~(UINT64(1)<<from));
 	uint32_t froml;
-	unsigned int i,i0,j,d,vi,kpl,pll=(b->player-1)^1; // pll is player after the move is made.
-	int list[32],va,egw=endgame_weight_all_i[b->piece_value];// blend using initial material
-	short int s2[2];
+	unsigned int i,i0,j,d,vi,kpl;
+	int list[32],va;
+	const int32_t egw { endgame_weight_all_i[b->piece_value] };// blend using initial material
+	TwinScore16 s2;
 	unsigned char w;
+	unsigned int pll { (b->player - 1U) ^ 1U }; // pll is player index after the move is made.
 
 	// calculate move value based on PST
 	i0=(b->piece[from]&7)-1;
 	w=b->piece[cell];
-	vi=(i0<<1)+pll^1;					// index of "from" piece
+	vi = (i0<<1) + (pll ^ 1U);					// index of "from" piece
+
 	if( i0==0 ){// pawn moves - promotions and near promotions.
-		((int*)s2)[0]=((int*)&piece_square[0][vi][cell][0])[0];
-		((int*)s2)[0]-=((int*)&piece_square[0][vi][from][0])[0];
+		s2  =piece_square[0][vi][cell];
+		s2 -= piece_square[0][vi][from];
 	}
 	else
-		((int*)s2)[0]=0;
+		s2.u32 = 0;
+
 	if( cell==b->last_move && i0==0 ) // EP capture - make captured piece pawn.
 		w=1;
 	if( w ){// capture
-		((int*)s2)[0]-=((int*)&piece_square[(w & 7U) - 1][pll][cell][0])[0];
+		s2 -= piece_square[(w & 7U) - 1][pll][cell];
 	}
-	va=s2[0]+(((s2[1]-s2[0])*egw)>>10);	// blend
+
+	va = s2.blendByEndgameWeight(egw);
 	if( !pll ) va=-va;			// Make it positive.
 
 	// find all attacks on "cell", for both players, excluding currently blocked sliders.
@@ -1335,7 +1343,7 @@ int see_move(board *b,unsigned int from,unsigned int cell){// static exchange ev
 		else if( (a=attackerBB&b->piececolorBB[3][pll]) ) i=3;
 		else if( (a=attackerBB&b->piececolorBB[4][pll]) ) i=4;
 		else{// king, by exclusion.
-			if( attackerBB&b->colorBB[pll^1] )// stop if king is captured.
+			if( attackerBB&b->colorBB[pll ^ 1U] )// stop if king is captured.
 				break;
 			a=attackerBB&b->piececolorBB[5][pll];
 			i=5; // there is only 1 possible king attacker - no need to pick it!
@@ -1352,11 +1360,11 @@ int see_move(board *b,unsigned int from,unsigned int cell){// static exchange ev
 			&& !(ray_segment[kpl][froml]&o)	// no blockers in between king and moving piece
 		){
 			if( d==1 || d==8 ){
-				bb=attacks_bb_R(kpl,o)&((b->piececolorBB[3][pll^1]|b->piececolorBB[4][pll^1])&no_from); // rook (and queen) attacks, opp only.
+				bb=attacks_bb_R(kpl,o)&((b->piececolorBB[3][pll ^ 1U]|b->piececolorBB[4][pll ^ 1U])&no_from); // rook (and queen) attacks, opp only.
 				if( d==1 ) bb&=dir_mask[1][kpl];
 				else bb&=dir_mask[3][kpl];
 			}else{
-				bb=attacks_bb_B(kpl,o)&((b->piececolorBB[2][pll^1]|b->piececolorBB[4][pll^1])&no_from); // bishop (and queen) attacks, opp only.
+				bb=attacks_bb_B(kpl,o)&((b->piececolorBB[2][pll ^ 1U]|b->piececolorBB[4][pll ^ 1U])&no_from); // bishop (and queen) attacks, opp only.
 				if( d==7 ) bb&=dir_mask[2][kpl];
 				else bb&=dir_mask[4][kpl];
 			}
@@ -1370,15 +1378,17 @@ int see_move(board *b,unsigned int from,unsigned int cell){// static exchange ev
 		}
 
 		// calculate move value based on PST
-		((int*)s2)[0]=((int*)&piece_square[i0][pll ^ 1][cell][0])[0]; // remove current "to"
+		s2 = piece_square[i0][pll ^ 1][cell]; // remove current "to"
 
 		if( i==0 ){// for pawn, add PST move change: to get promotions and almost promotions.
 			vi=(i<<1)+pll;// index of "from" piece
-			((int*)s2)[0]-=((int*)&piece_square[0][vi][cell][0])[0]; // add new "to"
-			((int*)s2)[0]+=((int*)&piece_square[0][vi][cell][0])[0]; // remove current "from"
+			s2 -= piece_square[0][vi][cell]; // add new "to"
+			s2 += piece_square[0][vi][cell]; // remove current "from"
 		}
-		va=s2[0]+(((s2[1]-s2[0])*egw)>>10);	// blend, using starting material.
+
+		va = s2.blendByEndgameWeight(egw);
 		if( !pll ) va=-va;// Make it positive.
+
 		list[j++]=va;		// add it to the list
 
 		// add new attacked from now open directions
@@ -1386,7 +1396,7 @@ int see_move(board *b,unsigned int from,unsigned int cell){// static exchange ev
 		else if( a&bishop_masks[cell] ) attackerBB|=attacks_bb_B(cell,o)&aB;	// bishop (and queen) attacks, both colors.
 
 		past_attacks|=a;			// add current attack to past attacks
-		pll=pll^1;					// switch player.
+		pll=(pll ^ 1U);					// switch player.
 		attackerBB&=~past_attacks;	// remove the past attackers from "attackerBB".
 		i0=i;						// save current attacker
 	}while( attackerBB&b->colorBB[pll] );// loop while there are attacks

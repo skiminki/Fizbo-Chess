@@ -6,7 +6,7 @@
 #if USE_AVX
 
 // compute output of network, taking board as input. Using AVX2 instructions.
-short int pass_forward_b(board *b)
+int16_t pass_forward_b(const board *b)
 {
 	constexpr __m256i vzero { };
 	__m256i v0 { };
@@ -43,7 +43,7 @@ short int pass_forward_b(board *b)
 #else
 
 // compute output of network, taking board as input. Using SSE2 instructions.
-short int pass_forward_b(board *b)
+int16_t pass_forward_b(const board *b)
 {
 	constexpr __m128i vzero { };
 	__m128i v0 { };

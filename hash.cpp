@@ -1,12 +1,50 @@
 // transposition table implementation
 
+#include "hash.h"
 #include <cstdlib>
 #include <cstring>
 #include <random>
 
+#include <atomic>
+
 #include "chess.h"
 
-hash* h; // hash table
+std::atomic<HashSlotStorageType> *h; // hash table
+
+namespace {
+
+	struct hash {
+		uint32_t ttHashKey : ttHashKeyBits;     // 26 bits of hash key
+		uint8_t depth:6;			// 6 bits of depth: 0 to 63 = 32
+		int16_t score;				// 16 bits, score, +-10K. Need 15 bits to cover +-16K. = 48
+		uint8_t from:6;			// "from". Need 6 bits = 54
+		uint8_t type:2;			// score type: 0/1/2=exact,lower,upper. Need 2 bits. = 56
+		uint8_t to:6;				// "to". Need 6 bits. = 62
+		uint8_t age:2;			// age: 0 to 3. Need 2 bits. = 64
+	}; // 8 bytes.
+
+	static_assert(sizeof(hash) == sizeof(HashSlotStorageType), "Cooked and storage types must match");
+
+	union HashSlotCookedAndRawUnion {
+		hash cooked;
+		uint64_t raw;
+	};
+
+	inline HashSlotStorageType ttSlotToU64(hash h)
+	{
+		HashSlotCookedAndRawUnion tt;
+		tt.cooked = h;
+		return tt.raw;
+	}
+
+	inline hash ttSlotFromU64(HashSlotStorageType u)
+	{
+		HashSlotCookedAndRawUnion tt;
+		tt.raw = u;
+		return tt.cooked;
+	}
+}
+
 UINT64 *mem;
 UINT64 hash_index_mask;
 unsigned int TTage;// TT aging counter, 0 to 3.
@@ -55,7 +93,7 @@ void int_m2(void);
 extern UINT64 *eh; // eval hash pointer
 extern short int *mh; // material table pointer
 void clear_hash(unsigned int i){//0: TT only. >0: Pawn hash also.
-	memset(h,0,sizeof(hash)*HSIZE);// TT hash
+	memset(static_cast<void *>(h), 0, sizeof(hash)*HSIZE);// TT hash
 	// Eval hash is always reset in solve_prep function.
 	if(i) memset(ph,0,8*PHSIZE);// pawn hash
 }
@@ -124,7 +162,7 @@ void init_hash(void){
 		#endif
 	
 		if( h==NULL ){// cannot allocate. Use regular malloc
-			h=(hash*)malloc(sizeof(hash)*HSIZE);// raw size
+			h=(std::atomic<HashSlotStorageType> *)malloc(sizeof(hash)*HSIZE);// raw size
 			ph=(UINT64*)malloc(8*PHSIZE);// raw size
 			eh=(UINT64*)malloc(8*EHSIZE);// raw size
 			mh=(short int*)malloc(512*1024);// raw size
@@ -148,27 +186,35 @@ void init_hash(void){
 
 unsigned int hashfull(void){// cound hash entries in the first 1000 spots, for current age only
 	unsigned int i,s;
-	for(i=s=0;i<1000;++i)
-		if( h[i].age==TTage )
+	for(i=s=0;i<1000;++i) {
+		hash entry { ttSlotFromU64(h[i].load(std::memory_order_relaxed)) };
+
+		if( entry.age == TTage )
 			s++;
+	}
 	return(s);
 }
 
-NOINLINE unsigned int lookup_hash(unsigned int depth,board *b,hash_data *hd,unsigned int ply){// returns indicator only.
-	volatile hash *h1=&h[get_hash_index];// always start at the beginiing of block of 4 - 4-way set-associative structure.
+NOINLINE unsigned int lookup_hash(unsigned int depth, const board *b, hash_data *hd, unsigned int ply){// returns indicator only.
+	std::atomic<HashSlotStorageType> *h1 = &h[getHashIndex(b->hash_key)];// always start at the beginiing of block of 4 - 4-way set-associative structure.
 	hash h_read;
-	unsigned int i,lock4a=(((unsigned int *)&b->hash_key)[1])<<6;// shift out top 6 bits - they are depth.
+	unsigned int i; //,lock4a=(((unsigned int *)&b->hash_key)[1])<<6;// shift out top 6 bits - they are depth.
+
+	const uint32_t ttHashKey = ((b->hash_key) >> 32) & 0x03FFFFFFU; // 26 bits of hash key
 
 	// check if it matches all pieces and player
 	for(i=0;i<4;++i,++h1){
-		h_read=((hash*)h1)[0]; // atomic read
-		if( ((((unsigned int*)&h_read.lock2)[0])<<6)==lock4a ){// match. Shift out top 6 bits.
+		h_read = ttSlotFromU64(h1->load(std::memory_order_relaxed));
+
+		if (h_read.ttHashKey == ttHashKey) { // match
 			hd->depth=h_read.depth;								// return depth
 			hd->bound_type=h_read.type;
 			hd->tt_score=h_read.score;
-			((unsigned short int*)&hd->move[0])[0]=((unsigned short int*)&h_read.score)[1]&0x3f3f;// move
-			hd->alp=MIN_SCORE;hd->be=MAX_SCORE;					// init score
-			h1->age=TTage;										// not stale anymore
+			hd->move[0] = h_read.from;
+			hd->move[1] = h_read.to;
+			hd->alp=MIN_SCORE;
+			hd->be=MAX_SCORE;					// init score
+			h1->store(ttSlotToU64(h_read), std::memory_order_relaxed); // not stale anymore
 
 			if( depth<=h_read.depth ){			// only use bounds for search of the same OR GREATER depth.
 				int s1=h_read.score;			// score to be returned
@@ -191,11 +237,15 @@ NOINLINE unsigned int lookup_hash(unsigned int depth,board *b,hash_data *hd,unsi
 	return(0); // not a match
 }
 
-NOINLINE void add_hash(int alp,int be,int score,unsigned char *move,unsigned int depth,board *b,unsigned int ply){
+NOINLINE void add_hash(int alp,int be,int score,unsigned char *move,unsigned int depth,const board *b,unsigned int ply){
 	static const unsigned int TTage_convert[4][4]={{0,3,2,1},{1,0,3,2},{2,1,0,3},{3,2,1,0}};// converts current (first arg) and old (last arg) TT age into age difference
-	volatile hash *h2,*h1=&h[get_hash_index];// always start at the beginiing of block of 4 - 4-way set-associative structure.
+	std::atomic<HashSlotStorageType> *h2;
+	std::atomic<HashSlotStorageType> *h1 = &h[getHashIndex(b->hash_key)];// always start at the beginiing of block of 4 - 4-way set-associative structure.
 	hash h_read;
-	unsigned int i,lock4a=(((unsigned int *)&b->hash_key)[1])<<6;// shift out top 6 bits - they are depth.
+	unsigned int i;
+
+	const uint32_t ttHashKey = ((b->hash_key) >> 32) & 0x03FFFFFFU; // 26 bits of hash key
+
 	int s_replace=1000,s1=score; // this is score that i store in TT
 
 	if( abs(s1)>=5000 ){// mate - adjust by ply
@@ -207,25 +257,29 @@ NOINLINE void add_hash(int alp,int be,int score,unsigned char *move,unsigned int
 
 	// check if it matches all pieces and player
 	for(i=0;i<4;++i,++h1){
-		h_read=((hash*)h1)[0]; // atomic read
-		if( ((((unsigned int*)&h_read.lock2)[0])<<6)==lock4a ){// match. Shift out top 6 bits.
-			//if( depth>=h_read.depth ){// replace old values if new search is of same or bigger depth. Here new depth is higher 61%, same 36%, lower 4%.
-			// always replacing is +5 ELO. 6/2017.
-				h_read.score=s1;		//score;
-				if( ((unsigned short int*)move)[0] )// only replace the move if it is valid
-					((unsigned short int*)&h_read.score)[1]=((unsigned short int*)move)[0];// move.
-				h_read.age=TTage;		// not stale anymore
-				if(score<be){
-					if(score>alp)
-						h_read.type=0;
-					else
-						h_read.type=2;	// score<=alp - upper bound. Score is in the range -inf, score.
-				}else
-					h_read.type=1;		// score>=be - lower bound. Score is in the range score, +inf.
-				h_read.depth=depth;
-				*(hash*)h1=h_read;// atomic write
-			//}else// current depth is larger - retain the values.
-			//	h1->age=TTage; // not stale anymore
+		h_read = ttSlotFromU64(h1->load(std::memory_order_relaxed)); // atomic read
+		if (h_read.ttHashKey == ttHashKey) { // match
+ 			// always replacing is +5 ELO. 6/2017.
+			h_read.score=s1;		// score
+
+			if (move[0] || move[1]) {
+				// only replace the move if it is valid
+				h_read.from = move[0];
+				h_read.to = move[1];
+			}
+
+			h_read.age=TTage;		// not stale anymore
+
+			if(score<be){
+				if(score>alp)
+					h_read.type=0;
+				else
+					h_read.type=2;	// score<=alp - upper bound. Score is in the range -inf, score.
+			} else
+				h_read.type=1;		// score>=be - lower bound. Score is in the range score, +inf.
+			h_read.depth=depth;
+			h1->store(ttSlotToU64(h_read), std::memory_order_relaxed); // atomic write
+
 			return; // match found and updated - return
 		}else{// no match. Consider it for replacement
 			int s=int(h_read.depth)-(int(TTage_convert[TTage][h_read.age])<<8)+(h_read.type==0?2:0);  // order: age(decr), then depth(incr), then node type. Here 2 for PV seems best
@@ -236,11 +290,12 @@ NOINLINE void add_hash(int alp,int be,int score,unsigned char *move,unsigned int
 			}
 		}
 	}
-	
+
 	// Always replace - should be better in long games.
-	(((unsigned int*)&h_read.lock2)[0])=lock4a>>6;
+	h_read.ttHashKey = ttHashKey;
 	h_read.score=s1;
-	((unsigned short int*)&h_read.score)[1]=((unsigned short int*)move)[0];// move
+	h_read.from = move[0];
+	h_read.to = move[1];
 	h_read.age=TTage;	// not stale anymore
 	if(score<be){
 		if(score>alp)
@@ -250,10 +305,12 @@ NOINLINE void add_hash(int alp,int be,int score,unsigned char *move,unsigned int
 	}else
 		h_read.type=1;
 	h_read.depth=depth;
-	*(hash*)h2=h_read;// atomic write
+	h2->store(ttSlotToU64(h_read), std::memory_order_relaxed); // atomic write
  }
 
-void delete_hash_entry(board *b){// find this position and delete it from TT
-	volatile hash *h1=&h[get_hash_index];// always start at the beginiing of block of 4 - 4-way set-associative structure.
-	for(unsigned int i=0;i<4;++i,++h1) memset((void*)h1,0,sizeof(hash));// delete it
+NOINLINE void delete_hash_entry(board *b){// find this position and delete it from TT
+	std::atomic<HashSlotStorageType> *h1=&h[getHashIndex(b->hash_key)];// always start at the beginiing of block of 4 - 4-way set-associative structure.
+
+	for (unsigned int i=0; i<4; ++i)
+		h1[i].store(0, std::memory_order_relaxed);
  }

@@ -1,6 +1,7 @@
 // pawn scores
 #include "chess.h"
 #include "coeffs.h"
+#include "hash.h"
 
 UINT64* ph; // pawn hash table
 

@@ -3,6 +3,7 @@
 #define FIZBO_BITUTILS_H_INCLUDED
 
 #include <cstdint>
+#include <cstring>
 #include <immintrin.h>
 
 struct BitUtils {
@@ -76,5 +77,93 @@ struct BitUtils {
 #endif
 	}
 };
+
+struct TwinScore16 {
+	union {
+		uint32_t u32;
+		int16_t i16[2];
+	};
+
+	TwinScore16() = default;
+
+	inline TwinScore16(const int16_t (&x)[2])
+	{
+		memcpy(&u32, &x, 4);
+	}
+
+	inline TwinScore16(const int16_t sm, const int16_t se)
+	{
+		i16[0] = sm;
+		i16[1] = se;
+	}
+
+	inline TwinScore16(const int16_t *tbl, size_t off)
+	{
+		memcpy(&u32, tbl + off, 4);
+	}
+
+	inline TwinScore16 &operator = (const int16_t (&x)[2])
+	{
+		memcpy(&u32, &x, 4);
+		return *this;
+	}
+
+	inline TwinScore16 &operator -= (const int16_t (&x)[2])
+	{
+		TwinScore16 other { x };
+
+		u32 -= other.u32;
+		return *this;
+	}
+
+	inline TwinScore16 &operator += (const int16_t (&x)[2])
+	{
+		TwinScore16 other { x };
+
+		u32 += other.u32;
+		return *this;
+	}
+
+	inline const int16_t operator[] (size_t index) const
+	{
+		return i16[index];
+	}
+
+	inline int16_t &operator[] (size_t index)
+	{
+		return i16[index];
+	}
+
+	inline void addFromTable(const int16_t *tbl, size_t off)
+	{
+		TwinScore16 other { tbl, off };
+
+		u32 += other.u32;
+	}
+
+	inline void subFromTable(const int16_t *tbl, size_t off)
+	{
+		TwinScore16 other { tbl, off };
+
+		u32 -= other.u32;
+	}
+
+	// note: weight = 0 (full midgame)..1024 (full endgame)
+	int32_t blendByEndgameWeight(int32_t weight) const
+	{
+		const int32_t a { i16[0] };
+		const int32_t b { i16[1] };
+
+		// note: this rounds differently for positive/negative numbers:
+		//   1025 >> 10   = 1 (round towards zero)
+		//   1025 / 1024  = 1 (round towards zero)
+		// But:
+		//   -1025 >> 10  = -2 (round away from zero)
+		//   -1025 / 1024 = -1 (round towards zero)
+		return a + (((b - a) * weight) >> 10);
+	}
+};
+
+
 
 #endif // FIZBO_BITUTILS_H_INCLUDED

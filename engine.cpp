@@ -4,6 +4,7 @@
 #include <thread>
 
 #include "chess.h"
+#include "hash.h"
 #include "threads.h"
 
 // Globals
@@ -110,8 +111,9 @@ void delete_hash_entry(board*);
 extern unsigned int MaxCardinality;
 static uint32_t calculate_f(void *p_unused){// calculation function
 	board *b=&b_m;
-	int t2,a,be,t_min,t_max,score,i,last_score=MIN_SCORE,last_score2=MIN_SCORE;// init last score(s) to MIN_SCORE
+	int t2,a,be,t_min,t_max,score,last_score=MIN_SCORE,last_score2=MIN_SCORE;// init last score(s) to MIN_SCORE
 	unsigned char last_move[4],mm[4];
+	unsigned int i;
 	char sss[300];
 
 	// see if i have only 1 move - then move instantly
@@ -540,7 +542,7 @@ int main(int argc, char **argv) {
 				pass_message_to_GUI(sss);
 				sprintf(sss,"option name Threads type spin default %d min 1 max 56\n",Threads);
 				pass_message_to_GUI(sss);
-				sprintf(sss,"option name Hash type spin default %d min 1 max 65536\n",int((UINT64(1)<<(HBITS-20))*sizeof(hash)));
+				sprintf(sss,"option name Hash type spin default %d min 1 max 65536\n",int((UINT64(1)<<(HBITS-20))*sizeof(HashSlotStorageType)));
 				pass_message_to_GUI(sss);
 				sprintf(sss,"option name Ponder type check default %s\n",oo[pondering_allowed]);
 				pass_message_to_GUI(sss);
@@ -584,7 +586,7 @@ int main(int argc, char **argv) {
 					UINT64 ii=i;
 					ii=ii*1024;
 					ii=ii*1024;
-					ii=ii/sizeof(hash); // this approach (step by step) allows 4Gb or more to be used
+					ii=ii/sizeof(HashSlotStorageType); // this approach (step by step) allows 4Gb or more to be used
 					uint32_t bit;
 					BSR64l(&bit,ii);
 					HBITS=bit;

@@ -33,30 +33,30 @@ public:
 
 // split-point structure
 typedef struct{
-	UINT64 slave_bits;		// bits are set for threads working on this sp. Including master (bit 0)
-	board b;				// board
-	move_list* mlp;			// pointer to move list object
+	UINT64 slave_bits { };		// bits are set for threads working on this sp. Including master (bit 0)
+	board b { };				// board
+	move_list* mlp { };			// pointer to move list object
 	std::condition_variable CVsp;// master is allowed to run on this split point (last slave is done with it)
-	unsigned int c_0;		// count of items not analyzed
-	unsigned int c_1;		// count of slaves working on this split-point (master is always working on it)
-	int be;					// beta
-	int depth;				// depth
-	unsigned int ply;		// ply
-	unsigned int node_type;	// node type
-	unsigned int sp_index;	// index of this SP in "sp_all/open_mask" variables. 0 to 63.
-	unsigned int sp_created_by_thread;	// index of thread that created this SP; 0+
-	best_m bm;
-	int in_check;
-	int ext_ch;
-	Spinlock lock;			// spinlock
-	int master_sleeping;	// indicator for when mastert is sleeping on this point waiting for slaves to finish. Then last slave wakes up the master.
-	int beta_break;
+	unsigned int c_0 { };		// count of items not analyzed
+	unsigned int c_1 { };		// count of slaves working on this split-point (master is always working on it)
+	int be { };					// beta
+	int depth { };				// depth
+	unsigned int ply { };		// ply
+	unsigned int node_type { };	// node type
+	unsigned int sp_index { };	// index of this SP in "sp_all/open_mask" variables. 0 to 63.
+	unsigned int sp_created_by_thread { };	// index of thread that created this SP; 0+
+	best_m bm { };
+	int in_check { };
+	int ext_ch { };
+	Spinlock lock { };			// spinlock
+	int master_sleeping { };	// indicator for when mastert is sleeping on this point waiting for slaves to finish. Then last slave wakes up the master.
+	int beta_break { };
 	#if SLOG
-	unsigned int id;		// unique ID of this point
-	unsigned int i0;		// i of SP creation
-	int t1;					// time SP is created
+	unsigned int id { };		// unique ID of this point
+	unsigned int i0 { };		// i of SP creation
+	int t1 { };					// time SP is created
 	#endif
-	unsigned char move_hist[MAX_MOVE_HIST][MAX_MOVE_HIST][2];// move history.
+	unsigned char move_hist[MAX_MOVE_HIST][MAX_MOVE_HIST][2] { };// move history.
 } split_point_type;
 
 extern board *b_s;
