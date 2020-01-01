@@ -304,7 +304,7 @@ template <EvalType ET1> int evall(board *b){
 	unsigned int d,king_attack_units[2],total_piece_value[2],index;
 	int sk;
 
-	TwinScore16 sk2;
+	TwinScore16 sk2 { };
 
 	// look in eval hash table - only if not training set work
 	#if TRAIN==0
@@ -316,7 +316,6 @@ template <EvalType ET1> int evall(board *b){
 
 	data_prefetch((const char*)&ph[b->pawn_hash_key%PHSIZE]); // prefetch pawn hash
 	sk=mh[b->mat_key];// material key
-	sk2.u32=0;//init
 	total_piece_value[0]=total_piece_value[1]=0;
 
 	// comment out for training, uncomment for games
@@ -1261,7 +1260,7 @@ template <EvalType ET1> int evall(board *b){
 	#if TRAIN
 	if( use_hash==1 ){
 	#endif
-	sk2.u32+=pawn_score(b);
+		sk2 += TwinScore16(pawn_score(b));
 	#if TRAIN
 	}
 	#endif
@@ -1272,12 +1271,12 @@ template <EvalType ET1> int evall(board *b){
 
 	// combine m and e scores
 	if( b->player==2 ){// change sign for black for all "sk" vars
-		sk2.u32=-sk2.u32;
+		sk2 = -sk2;
 		sk=-sk;
 	}
 	#if calc_pst==1
 	#else
-	sk2.u32+=b->score_m_and_e;
+	sk2 += TwinScore16(b->score_m_and_e);
 	#endif
 	
 	#if LOG_STEPS

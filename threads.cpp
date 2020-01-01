@@ -15,7 +15,7 @@ UINT64 sp_all_mask;						// mask of all split-points: 1 if occupied, 0 if free.
 UINT64 sp_open_mask;					// mask of open (with moves to be searched) SPs
 UINT64 thread_running_mask=1;			// init to "master is running"
 static std::thread **s_th = nullptr;					// slave thread handles
-std::atomic<int> slave_count;						// count of running slaves
+std::atomic<unsigned int> slave_count;						// count of running slaves
 static int slave_terminate=0;			// set to 1 to terminate threads
 
 

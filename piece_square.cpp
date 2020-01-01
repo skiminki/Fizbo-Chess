@@ -13,7 +13,7 @@ void init_piece_square(void){// set "piece_square0" variable - transpose piece_s
 	for(i=0;i<6;i++)// piece
 		for(j=0;j<64;++j){// square
 			jj=((j&7)<<3)+(j>>3);// transpose
-			jj2=(j&56)+(7-j&7);// for black, flip rank
+			jj2=(j&56)+((7-j)&7);// for black, flip rank
 			// midgame
 			piece_square0[0][i][0][j]=piece_square00[0][i][jj]+adj[O_P+i];// white
 			piece_square0[0][i][1][jj2]=-piece_square0[0][i][0][j];// black
@@ -24,7 +24,7 @@ void init_piece_square(void){// set "piece_square0" variable - transpose piece_s
 
 	// copy rank 8 queen into pawn - for promotion logic. And zero out rank 1 - for ep logic
 	for(j=7;j<64;j+=8){// square
-		jj2=(j&56)+(7-j&7);// for black, flip rank
+		jj2=(j&56)+((7-j)&7);// for black, flip rank
 		// midgame
 		piece_square0[0][0][0][j]=piece_square0[0][4][0][j];// white
 		piece_square0[0][0][1][jj2]=piece_square0[0][4][1][jj2];// black

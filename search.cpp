@@ -1,4 +1,5 @@
 // main search functionality
+#include <algorithm>
 #include <cinttypes>
 #include <cstring>
 #include "chess.h"
@@ -18,7 +19,7 @@ unsigned int pv10[]={0,0,3,3,5,10,100}; // used for almost everything. Need king
 int timer_depth;						// depth at which timer is checked
 
 int see_move(board *,unsigned int,unsigned int);
-static void Qsort(board*,unsigned char*,unsigned int);
+static void Qsort(const board*, MoveFromTo *moveList, uint8_t moveCount);
 
 static void reduce_history(unsigned int bits,board *b) {
 
@@ -1304,11 +1305,11 @@ int see_move(board *b,unsigned int from,unsigned int cell){// static exchange ev
 	vi = (i0<<1) + (pll ^ 1U);					// index of "from" piece
 
 	if( i0==0 ){// pawn moves - promotions and near promotions.
-		s2  =piece_square[0][vi][cell];
+		s2  = piece_square[0][vi][cell];
 		s2 -= piece_square[0][vi][from];
 	}
 	else
-		s2.u32 = 0;
+		s2 = TwinScore16(0);
 
 	if( cell==b->last_move && i0==0 ) // EP capture - make captured piece pawn.
 		w=1;
@@ -1477,7 +1478,7 @@ int Qsearch(board *b, unsigned int ply, int alp, int be,int node_type){// Q sear
 		// this executes 0.41 times per node/0.56 times per call.***
 		alp=std::max(alp,stand_pat);// improve alpha.
 		mc=get_all_attack_moves(b,list);// get all attack moves. This executes 0.40 times per node.*** 2.9 moves on average.
-		if( mc>1 ) Qsort(b,list,mc);
+		if( mc>1 ) Qsort(b, reinterpret_cast<MoveFromTo *>(list), mc);
 		//score=0;// for testing only
 		stand_pat+=100; // add margin. Here + makes cuts less likely - is conservative
 	}
@@ -1591,7 +1592,7 @@ qse:
 }
 
 // v/a. High means sort to the front.
-static constexpr int Qsort_order[6][8] = {
+static constexpr uint8_t Qsort_order[6][8] = {
 	{  34,0,0,0,0,0,7,0 },
 	// ep z z z z z p* z
 
@@ -1612,67 +1613,48 @@ static constexpr int Qsort_order[6][8] = {
 };
 
 
+inline uint32_t encodeSortOrderAndMove(MoveFromTo move, uint8_t origOrder, uint8_t sortOrder)
+{
+	return uint32_t { move } | (uint32_t{ origOrder } << 16) | (uint32_t {sortOrder} << 24);
+}
 
-static void Qsort(board *b,unsigned char *list,unsigned int mc){
-	//UINT64 bb,one=1;
-	unsigned int i,j;
-	int scores[128],temp,temp2;
-	unsigned char from,to,v,w;
+inline void decodeSortOrderAndMove(uint32_t sortOrderAndMove, MoveFromTo &move)
+{
+	move = sortOrderAndMove & 0xFFFFU;
+}
 
-	//int ccc1[64];
-	//memset(ccc1,0,sizeof(ccc1));
+static void Qsort(const board *b, MoveFromTo *list, uint8_t moveCount)
+{
+	uint32_t sortOrderAndMoves[maxNumberOfMoves];
 
-	// get mask of squares protected by pawns
-	/*if( b->player==1){// white move, black pawns are protecting
-		UINT64 a=b->piececolorBB[0][1];
-		bb=(a<<7)&(a>>9);
-	}else{// black move, white pawns are protecting
-		UINT64 a=b->piececolorBB[0][0];
-		bb=(a<<9)&(a>>7);
-	}*/
+	assert(mc < maxNumberOfMoves);
 
-	scores[0]=2000000000;// max value. Need this to avoid going into negative j.
-	for(i=0;i<mc;++i){
-		from=list[2*i];to=list[2*i+1];
-		v=b->piece[from];w=b->piece[to];
+	// score moves in the move list
+	for (uint8_t i = 0; i < moveCount; ++i) {
+
+		const MoveFromTo move  = list[i];
+		const SquareIndex from = getMoveFrom(move);
+		const SquareIndex to   = getMoveTo(move);
+
+		uint8_t v = (b->piece[from]            & 7);  // attacker
+		uint8_t w = (b->piece[getMoveTo(move)] & 7);  // victim. 0=EP. Or promo.
+
 		assert(v);
-		v=v&7; // attacker
-		w=w&7; // victim. 0=EP. Or promo.
 
-		if( v==1 && ((to&7)==0 || (to&7)==7) ) v=7;// promotion: a=7.
+		// promotion? a=7
+		if (v==1 && ((to & 7) == 0 || (to & 7) == 7))
+			v=7;
+
 		assert(w<6);
 		assert(v-1<7);
-		temp=Qsort_order[w][v-1];
-		assert(temp);
-		
 
-		//if( v>1 && (bb&(one<<to)) ) temp-=6;// piece attacks protected pawn =-X
-		
-		//ccc1[i]=w*8+v-1;// record the move
-
-		// MVV/LVA
-		/*int v1=piece_value_search[w];
-		int v2=piece_value_search[v];
-		if( v==1 && ((to&7)==0 || (to&7)==7) ){ v1+=800;v2=900; }// promotion: attack v+800 with q
-		else if( w==0 ) v1=100;// EP
-		temp=(v1<<4)-v2;	// most valuable victim/least valuable attacker
-		*/
-		
-
-		// insertion sort
-		j=i;
-		temp2=((short int*)&list[2*i])[0];// save A[i], the value that will be inserted into the array on this iteration
-		while( temp>scores[j] ){ //value to insert doesn't belong where the hole currently is, so shift 
-			scores[j+1]=scores[j];										//shift the larger value down
-			((short int*)&list[2*j])[0]=((short int*)&list[2*(j-1)])[0];//shift the larger value down
-			j--;														//move the hole position down
-		}
-		scores[j+1]=temp;
-		((short int*)&list[2*j])[0]=temp2;
+		sortOrderAndMoves[i] = encodeSortOrderAndMove(move, i, 255U - Qsort_order[w][v-1]);
 	}
 
-	// count moves
-	/*for(i=0;i<mc;++i)
-		for(j=0;j<mc;++j)
-			ccc[ccc1[i]+ccc1[j]*48]++;*/
+	std::sort(sortOrderAndMoves, sortOrderAndMoves + moveCount);
+
+	// write moves back to move list
+	for (uint8_t i = 0; i < moveCount; ++i) {
+		decodeSortOrderAndMove(sortOrderAndMoves[i], list[i]);
+	}
 }

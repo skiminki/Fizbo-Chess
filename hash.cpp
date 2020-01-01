@@ -54,10 +54,10 @@ static unsigned int HSIZE;
 
 namespace {
 
-	// We'll use the Visual C++ PRNG to get the same Zobrist keys for Fizbo-Linux
-	// and Fizbo on Windows. Here it is:
 	ZobristArrayType initZobristKeys()
 	{
+		// We'll use the Visual C++ PRNG to get the same Zobrist keys for Fizbo-Linux
+		// and Fizbo on Windows. Here it is:
 		using VisualCppPRNG = std::linear_congruential_engine<uint_fast64_t, 214013, 2531011, uint64_t { 1 } << 32>;
 		VisualCppPRNG msRandom;
 
@@ -270,23 +270,25 @@ NOINLINE void add_hash(int alp,int be,int score,unsigned char *move,unsigned int
 
 			h_read.age=TTage;		// not stale anymore
 
-			if(score<be){
-				if(score>alp)
+			if(score < be) {
+				if(score > alp)
 					h_read.type=0;
 				else
 					h_read.type=2;	// score<=alp - upper bound. Score is in the range -inf, score.
 			} else
 				h_read.type=1;		// score>=be - lower bound. Score is in the range score, +inf.
+
 			h_read.depth=depth;
+
 			h1->store(ttSlotToU64(h_read), std::memory_order_relaxed); // atomic write
 
 			return; // match found and updated - return
-		}else{// no match. Consider it for replacement
+		} else { // no match. Consider it for replacement
 			int s=int(h_read.depth)-(int(TTage_convert[TTage][h_read.age])<<8)+(h_read.type==0?2:0);  // order: age(decr), then depth(incr), then node type. Here 2 for PV seems best
-			//int s=int(h_read.depth)-(int(TTage_convert[TTage][h_read.age])<<3)+(h_read.type==0?1:0);  // order: age(decr), then depth(incr), then node type: a wash, do not use. 6/2017.
-			if( s<s_replace ){// lower depth (or stale, or both) found, record it as best. Here i is already a tie-breaker.
+
+			if( s<s_replace ) { // lower depth (or stale, or both) found, record it as best. Here i is already a tie-breaker.
 				s_replace=s;
-				h2=h1;
+				h2 = h1;
 			}
 		}
 	}
@@ -311,6 +313,6 @@ NOINLINE void add_hash(int alp,int be,int score,unsigned char *move,unsigned int
 NOINLINE void delete_hash_entry(board *b){// find this position and delete it from TT
 	std::atomic<HashSlotStorageType> *h1=&h[getHashIndex(b->hash_key)];// always start at the beginiing of block of 4 - 4-way set-associative structure.
 
-	for (unsigned int i=0; i<4; ++i)
+	for (unsigned int i=0; i < 4; ++i)
 		h1[i].store(0, std::memory_order_relaxed);
  }

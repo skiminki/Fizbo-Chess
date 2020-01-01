@@ -116,7 +116,8 @@ int pawn_score(board *b){// return scores for WHITE.
 	pTT h;
 	uint32_t bit;
 	unsigned int i,j,sq[2][8],sq_cnt[2]; //sq: list of all pawns.
-	int sk4;
+	//	int sk4;
+	TwinScore16 sk4 { };
 	
 	// look in pawn hash table
 	h1=&ph[b->pawn_hash_key%PHSIZE];
@@ -127,7 +128,6 @@ int pawn_score(board *b){// return scores for WHITE.
 		return(h.sk4);
 	#endif
 	h.lock=((unsigned int*)&b->pawn_hash_key)[1]; // save lock now (into h, not into real memory!)
-	sk4=0;// init scores	
 
 	// populate bitboards
 	w_bb=b->piececolorBB[0][0];//white pawn
@@ -141,12 +141,12 @@ int pawn_score(board *b){// return scores for WHITE.
 		sq[0][sq_cnt[0]++]=bit; // record position of this pawn
 
 		#if calc_pst==1		
-		sk4+=((int*)&piece_square[0][0][bit][0])[0];// white P PST
+		sk4+ = piece_square[0][0][bit];// white P PST
 		#endif
 
 		// count isolated pawns. Here i count doubled isolated pawns as 2 isolated.
 		if( (is_mask[bit>>3]&w_bb)==0 ){
-			sk4-=((int*)&adj[O_ISOLATED])[0];
+			sk4.subFromTable(adj, O_ISOLATED);
 			#if TRAIN
 			pawn_deriv_coeffs[1]--; // 1=isolated************************************************************************************************************
 			#endif
@@ -157,19 +157,19 @@ int pawn_score(board *b){// return scores for WHITE.
 		if( !((w_bb&blocked_mask[bit])|(b_bb&halfopen_mask[bit])) ){// not blocked by anyone - half-open file. Could be (candidate) passed
 			if( (b_bb&passed_mask[bit])==0 ){ // passed pawn
 				if( (bit&7)<6 )// skip rank 7
-					sk4+=((int*)&adj[O_PASSED+(bit&7)*2-2])[0];
+					sk4.addFromTable(adj, O_PASSED+(bit&7)*2-2);
 				#if TRAIN
 				pawn_deriv_coeffs[2+(bit&7)-1]++; // 2-7=passed, on ranks 2-7************************************************************************************************************
 				#endif
 				if( i ){// protected passed pawn
-					sk4+=((int*)&adj[O_PASSED_PROTECTED])[0];
+					sk4.addFromTable(adj, O_PASSED_PROTECTED);
 					#if TRAIN
 					pawn_deriv_coeffs[8]++; // 8=passed protected************************************************************************************************************
 					#endif
 				}
 			}else if( popcnt64l(w_bb&forward_protected_mask[bit])>=popcnt64l(b_bb&(passed_mask[bit]^halfopen_mask[bit])) ){// assume candidate if current and forward squares have same of more defenders as attackers
 				if( (bit&7)<6 )// skip rank 7
-					sk4+=((int*)&adj[O_CAND_PASSED+(bit&7)*2-2])[0];
+					sk4.addFromTable(adj, O_CAND_PASSED+(bit&7)*2-2);
 				#if TRAIN
 				pawn_deriv_coeffs[23+(bit&7)-1]++; // 23-28=candidate passed, on ranks 2-7************************************************************************************************************
 				#endif
@@ -188,7 +188,7 @@ int pawn_score(board *b){// return scores for WHITE.
 
 		// count isolated pawns. Here i count doubled isolated pawns as 2 isolated.
 		if( (is_mask[bit>>3]&b_bb)==0 ){
-			sk4+=((int*)&adj[O_ISOLATED])[0];
+			sk4.addFromTable(adj, O_ISOLATED);
 			#if TRAIN
 			pawn_deriv_coeffs[1]++; // 1=isolated************************************************************************************************************
 			#endif
@@ -199,19 +199,19 @@ int pawn_score(board *b){// return scores for WHITE.
 		if( !((b_bb&blocked_mask[bit])|(w_bb&halfopen_mask[bit])) ){// not blocked by anyone - half-open file. Could be (candidate) passed
 			if( (w_bb&passed_mask[bit])==0 ){ // passed pawn
 				if( (bit&7)<6 )// skip rank 7
-					sk4-=((int*)&adj[O_PASSED+(bit&7)*2-2])[0];
+					sk4.subFromTable(adj, O_PASSED+(bit&7)*2-2);
 				#if TRAIN
 				pawn_deriv_coeffs[2+(bit&7)-1]--; // 2-7=passed, on ranks 2-7************************************************************************************************************
 				#endif
 				if( i ){// protected passed pawn
-					sk4-=((int*)&adj[O_PASSED_PROTECTED])[0];
+					sk4.subFromTable(adj, O_PASSED_PROTECTED);
 					#if TRAIN
 					pawn_deriv_coeffs[8]--; // 8=passed protected************************************************************************************************************
 					#endif
 				}
 			}else if( popcnt64l(b_bb&forward_protected_mask[bit])>=popcnt64l(w_bb&(passed_mask[bit]^halfopen_mask[bit])) ){// assume candidate if current and forward squares have same of more defenders as attackers
 				if( (bit&7)<6 )// skip rank 7
-					sk4-=((int*)&adj[O_CAND_PASSED+(bit&7)*2-2])[0];
+					sk4.subFromTable(adj, O_CAND_PASSED+(bit&7)*2-2);
 				#if TRAIN
 				pawn_deriv_coeffs[23+(bit&7)-1]--; // 23-28=candidate passed, on ranks 2-7************************************************************************************************************
 				#endif
@@ -224,24 +224,24 @@ int pawn_score(board *b){// return scores for WHITE.
 		unsigned int bit=sq[0][i];
 		for(j=i+1;j<sq_cnt[0];++j){// loop over P2, P2>P1
 			unsigned int index=index_pawn[bit*64+sq[0][j]];
-			sk4+=((int*)&adj[O_PP+index*2])[0];
+			sk4.addFromTable(adj, O_PP+index*2);
 		}
 	}
 	for(i=0;i+1<sq_cnt[1];++i){// all bits are already from white's POV
 		unsigned int bit=sq[1][i];
 		for(j=i+1;j<sq_cnt[1];++j){// loop over P2, P2>P1
 			unsigned int index=index_pawn[bit*64+sq[1][j]];
-			sk4-=((int*)&adj[O_PP+index*2])[0];
+			sk4.subFromTable(adj, O_PP+index*2);
 		}
 	}
 	
 	// add score to pawn hash table. Always replace.
 	#if TRAIN
 	#else
-	h.sk4=sk4;
+	h.sk4=sk4.getBoth();
 	((pTT*)h1)[0]=h;		// atomic write
 	#endif
 
 	// return score for WHITE.
-	return(sk4);
+	return sk4.getBoth();
 }

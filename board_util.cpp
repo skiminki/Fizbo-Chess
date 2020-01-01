@@ -1284,9 +1284,9 @@ void make_move(board *b,unsigned char from,unsigned char to,unmake *d)
 	// return score for the player.
 	#if calc_pst==0
 	if( pll ) // black moves
-		b->score_m_and_e = -b->score_m_and_e + sl4.u32;
+		b->score_m_and_e = -b->score_m_and_e + sl4.getBoth();
 	else // white moves
-		b->score_m_and_e = -b->score_m_and_e - sl4.u32;
+		b->score_m_and_e = -b->score_m_and_e - sl4.getBoth();
 	#endif
 }
 

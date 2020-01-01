@@ -19,6 +19,7 @@ using UINT64 = std::uint64_t;
 #define calc_pst 0		// 1=calculate in eval, 0=update incrementally. Here 0 is slightly faster - use that.
 
 constexpr uint64_t player_zorb { 0xab42094fee35f92eU };
+constexpr uint32_t maxNumberOfMoves { 218 }; // maximum number of moves in any legal position
 
 #ifdef __AVX__
 #define USE_AVX 1		// this is 5% faster. Also turn off AVX2 compiler switch.
@@ -105,6 +106,22 @@ typedef struct{
 
 // Square position. a1 = 0, a2 = 1, ..., b1 = 8, b2 = 9,... h8 = 63
 using SquareIndex = std::uint8_t;
+using MoveFromTo = std::uint16_t;
+
+constexpr inline MoveFromTo createMove(SquareIndex from, SquareIndex to)
+{
+	return MoveFromTo { from } | (MoveFromTo { to } << 8);
+}
+
+constexpr inline SquareIndex getMoveFrom(MoveFromTo move)
+{
+	return static_cast<SquareIndex>(move);
+}
+
+constexpr inline SquareIndex getMoveTo(MoveFromTo move)
+{
+	return static_cast<SquareIndex>(move >> 8);
+}
 
 
 // board data structure

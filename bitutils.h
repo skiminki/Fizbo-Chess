@@ -79,11 +79,13 @@ struct BitUtils {
 };
 
 struct TwinScore16 {
+private:
 	union {
 		uint32_t u32;
 		int16_t i16[2];
 	};
 
+public:
 	TwinScore16() = default;
 
 	inline TwinScore16(const int16_t (&x)[2])
@@ -93,13 +95,20 @@ struct TwinScore16 {
 
 	inline TwinScore16(const int16_t sm, const int16_t se)
 	{
-		i16[0] = sm;
-		i16[1] = se;
+		// we use this instead of i16 access to avoid false
+		// dependencies, since most of the time we should be using the
+		// 32-bit twin value
+		u32 = static_cast<uint16_t>(sm) | (static_cast<uint32_t>(se) << 16);
 	}
 
-	inline TwinScore16(const int16_t *tbl, size_t off)
+	explicit inline TwinScore16(const int16_t *tbl, size_t off)
 	{
 		memcpy(&u32, tbl + off, 4);
+	}
+
+	explicit inline TwinScore16(int32_t u)
+	{
+		u32 = u;
 	}
 
 	inline TwinScore16 &operator = (const int16_t (&x)[2])
@@ -107,7 +116,7 @@ struct TwinScore16 {
 		memcpy(&u32, &x, 4);
 		return *this;
 	}
-
+/*
 	inline TwinScore16 &operator -= (const int16_t (&x)[2])
 	{
 		TwinScore16 other { x };
@@ -123,14 +132,40 @@ struct TwinScore16 {
 		u32 += other.u32;
 		return *this;
 	}
-
-	inline const int16_t operator[] (size_t index) const
+*/
+	inline TwinScore16 &operator -= (const TwinScore16 &x)
 	{
-		return i16[index];
+		u32 -= x.u32;
+		return *this;
+	}
+
+	inline TwinScore16 &operator += (const TwinScore16 &x)
+	{
+		u32 += x.u32;
+		return *this;
+	}
+
+	inline TwinScore16 operator - () const
+	{
+		return TwinScore16(- getBoth());
+	}
+
+	inline uint32_t getBoth() const
+	{
+		return u32;
+	}
+
+	inline int16_t operator[] (size_t index) const
+	{
+		// we use this instead of i16 access to avoid false
+		// dependencies, since most of the time we should be using the
+		// 32-bit twin value
+		return u32 >> (index == 0 ? 0 : 16);
 	}
 
 	inline int16_t &operator[] (size_t index)
 	{
+		// Allow modification of single score
 		return i16[index];
 	}
 

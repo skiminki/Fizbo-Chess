@@ -61,10 +61,10 @@ typedef struct{
 
 extern board *b_s;
 extern split_point_type *sp_all;
-extern UINT64 sp_all_mask;	
+extern UINT64 sp_all_mask;
 extern std::mutex L1;
 extern std::condition_variable CV1;
-extern std::atomic<int> slave_count;
+extern std::atomic<unsigned int> slave_count;
 extern UINT64 thread_running_mask;
 extern unsigned int Threads;
 extern UINT64 sp_open_mask;
