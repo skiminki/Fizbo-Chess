@@ -617,7 +617,7 @@ void init_all(unsigned int mode){// mode=1 is for training only: pass adj[] into
 	}
 
 	if( mode==0 ){
-		init_hash();					// init hash. Call this before init board, since it generates Zorbist keys. This also inits magic bitboards(only on second and later calls!), which use just allocated memory.
+		init_hash(128U);					// init hash. Call this before init board, since it generates Zorbist keys. This also inits magic bitboards(only on second and later calls!), which use just allocated memory.
 		init_moves();					// init move masks (castle)
 	}
 	init_piece_square();				// init piece square

@@ -48,8 +48,7 @@ namespace {
 UINT64 *mem;
 UINT64 hash_index_mask;
 unsigned int TTage;// TT aging counter, 0 to 3.
-unsigned int HBITS=24; // option**** 16 Mil entries * 8 bytes= 128 Mb. 24 bits. Main hash is 22 bits of 4-way blocks.
-//unsigned int HBITS=27; // option**** 128 Mil entries * 8 bytes= 1 Gb. 27 bits. Main hash is 25 bits of 4-way blocks.
+unsigned int HBITS; // default = 24; option**** 16 Mil entries * 8 bytes= 128 Mb. 24 bits. Main hash is 22 bits of 4-way blocks.
 static unsigned int HSIZE;
 
 namespace {
@@ -98,9 +97,21 @@ void clear_hash(unsigned int i){//0: TT only. >0: Pawn hash also.
 	if(i) memset(ph,0,8*PHSIZE);// pawn hash
 }
 
-void init_hash(void){
+void init_hash(uint32_t megabytes){
 	static UINT64 *meml=NULL;
 	static unsigned int HBL=0,virt=0;
+
+	// calculate HBITS
+	{
+		// clamp between 1..65536
+		megabytes = std::max(1U, megabytes);
+		megabytes = std::min(65536U, megabytes);
+
+		const uint64_t bytes = uint64_t { megabytes } << 20;
+		const uint64_t slots = bytes / sizeof(HashSlotStorageType);
+
+		HBITS = BitUtils::log2(slots);
+	}
 
 	// alloc memory
 	if( HBITS!=HBL ){

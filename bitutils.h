@@ -76,6 +76,18 @@ struct BitUtils {
 		return x & (x - 1);
 #endif
 	}
+
+	// not defined for m == 0
+	static inline unsigned log2(uint32_t m)
+	{
+		return 31U - clz(m);
+	}
+
+	// not defined for m == 0
+	static inline unsigned log2(uint64_t m)
+	{
+		return 63U - clz(m);
+	}
 };
 
 struct TwinScore16 {

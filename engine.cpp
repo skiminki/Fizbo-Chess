@@ -3,6 +3,7 @@
 #include <cstring>
 #include <thread>
 
+#include "bench.h"
 #include "chess.h"
 #include "hash.h"
 #include "threads.h"
@@ -17,7 +18,7 @@ static std::thread calculate_h;				// calculation thread handle
 static int time_per_move_base;			// in milliseconds
 static int time_per_move;				// incremental time per move, in milliseconds
 static unsigned int halfmovemade;		// number of hm's from start of the game
-static int moves_remaining;
+static uint32_t moves_remaining;
 static int my_time;						// total time remaining, in milliseconds
 static int ponder;						// pondering indicator
 static int pondering_allowed=0;			// option****
@@ -426,13 +427,191 @@ static NOINLINE void stop_th(void){// stop pondering thread
 
 unsigned int init_tablebases(char*);
 
+struct SearchControl {
+	static uint32_t base_moves;
+	static board b_l;			// local board
+	static std::array<uint64_t, 1200> hash_history;	// history of all hashes in the current game -- 600 move pairs
+
+
+	static void uciNewGame();
+	static void ponderHit();
+	static void stop();
+	static void isReady();
+
+	static void setOptionThreads(uint32_t threads);
+	static void setOptionHash(uint32_t hashMB);
+	static void setOptionPonder(bool ponderAllowed);
+
+	// positionDesc is either:
+	// - "startpos"
+	// - "fen <fenstring>"
+	//
+	// moves is either:
+	// - the moves played after the positionDesc (uci format)
+	// - nullptr (no additional moves)
+	static void position(const char *positionDesc, const char *moves);
+
+	// use std::numeric_limits<uint32_t>::max for wtime/btime for infinite search
+	static void go(uint32_t wtime, uint32_t btime, uint32_t winc, uint32_t binc, uint32_t movestogo, bool ponder);
+};
+
+uint32_t SearchControl::base_moves { };
+board SearchControl::b_l { };
+std::array<uint64_t, 1200> SearchControl::hash_history { };
+
+void SearchControl::uciNewGame()
+{
+	stop_th();// stop pondering thread
+	init_board(0,&b_m);
+
+	halfmovemade = 0;
+	base_moves = 0;
+
+#if ALLOW_LOG
+	fprintf(f_log,"    [DO]new\n");
+#endif
+}
+
+void SearchControl::isReady()
+{
+	pass_message_to_GUI("readyok\n");
+}
+
+void SearchControl::setOptionThreads(uint32_t threads)
+{
+	Threads = std::min(56U,std::max(1U,threads)); // apply min and max
+	init_threads(Threads - 1U);
+#if ALLOW_LOG
+	fprintf(f_log,"    [DO]use %u cores\n",threads);
+#endif
+}
+
+void SearchControl::setOptionHash(uint32_t hashMB)
+{
+	init_hash(hashMB);
+#if ALLOW_LOG
+	fprintf(f_log,"    [DO]use %d Mb of memory\n",int((UINT64(1)<<(HBITS-20))*sizeof(hash)));
+#endif
+}
+
+void SearchControl::setOptionPonder(bool ponder)
+{
+	pondering_allowed = ponder;
+
+#if ALLOW_LOG
+	fprintf(f_log,"    [DO]pondering allowed: %d\n",pondering_allowed);
+#endif
+}
+
+void SearchControl::stop()
+{
+#if ALLOW_LOG
+	fprintf(f_log,"    [DO]stopping calculation thread...\n");
+#endif
+	stop_th();// stop pondering thread
+}
+
+void SearchControl::ponderHit()
+{
+	ponder=0;			// turn pondering off
+
+	hash_data hd;// hash data
+	int tn=get_time();
+	unsigned char list[256];
+
+	// stop the calc! I already spent 1/0 of min and max time. Or only 1 move. Or good capture.
+	if( tn>t_min_l
+	    || legal_move_count(&b_l,list)==1
+	    || (lookup_hash(0,&b_l,&hd,0) && hd.alp==hd.be && move_is_legal(&b_l,hd.move[0],hd.move[1]) && hd.depth>10 && abs(hd.alp)<9988 && !((b_l.piece[hd.move[0]]&7)==1 && ((hd.move[1]&7)==7 || (hd.move[1]&7)==0)) && see_move(&b_l,hd.move[0],hd.move[1])>200) 
+		){
+#if ALLOW_LOG
+		if( tn>t_min_l ) i=1;
+		else if( legal_move_count(&b_l,list)==1 ) i=2;
+		else i=3;
+		fprintf(f_log,"    [DO]ponderhit - terminate the search right now for reason %d. Time elapsed %d. Time for search is min/max/max1 %d/%d/%d\n",i,tn-time_start,t_min_l-time_start,timeout_complete_l-time_start,timeout_l-time_start);
+#endif
+		timer_depth=0;
+		my_time+=tn-time_start; // increase apparent time limit, so that i don't see this as a timeout.
+		timeout=timeout_complete=tn-1000; // in the past - break now.
+	}else{// here i could increase my time by elapsed time and recompute min/max. Not doing that is conservative.
+		if( timeout_complete==timeout ){
+			timeout=timeout_complete=timeout_complete_l;			// restore timeouts - both the same (long)
+		}else{
+			timeout_complete=timeout_complete_l;timeout=timeout_l;	// restore timeouts - different ones
+		}
+#if ALLOW_LOG
+		fprintf(f_log,"    [DO]ponderhit - switch to normal search. Time elapsed %d. Time for search is min/max/max1 %d/%d/%d\n",
+			tn - time_start,
+			t_min_l - time_start,
+			timeout_complete_l - time_start,
+			timeout_l - time_start);
+#endif
+	}
+}
+
+void SearchControl::position(const char *positionDesc, const char *moves)
+{
+	halfmovemade=0;
+
+	if (strncmp(positionDesc, "startpos", 8) == 0) {
+		init_board_FEN("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",&b_m);// initial board
+	} else if (strncmp(positionDesc, "fen ", 4) == 0) {
+		init_board_FEN(positionDesc + 4, &b_m);// FEN from GUI
+	} else {
+		pass_message_to_GUI("Bad position, defaulting to startpos\n");
+		init_board_FEN("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",&b_m);// initial board
+	}
+
+	// add new hash
+	UINT64 hl=b_m.hash_key;
+	if( b_m.player==2 ) hl^=player_zorb;
+	hash_history[halfmovemade++]=hl;
+
+	// process moves
+	if (moves) {
+		size_t offset = 0;
+		while( moves[offset]>='a' && moves[offset]<='h' &&
+		       moves[offset+1]>='1' && moves[offset+1]<='8'
+		       && moves[offset+2]>='a' && moves[offset+2]<='h'
+		       && moves[offset+3]>='1' && moves[offset+3]<='8' ){// move made - process it
+
+			char i=moves[offset++]-'a';
+			char j=moves[offset++]-'1';// from
+			char k=moves[offset++]-'a';
+			char l=moves[offset++]-'1';// to
+			unsigned char m=moves[offset++];// promotion to piece "m"
+			unmake d;
+			d.promotion=0;
+			make_move(&b_m,i*8+j,k*8+l,&d); // this updates player and sign of score.
+			if( m!=0 && m!=' ' && m!=10 && m!=13 ){// promotion to other than queen. Change the piece. And update TT hash and slider bitboards.
+				if( m=='n') b_m.piece[k*8+l]=2+(b_m.piece[k*8+l]&(64+128));// to knight
+				else if( m=='b') b_m.piece[k*8+l]=3+(b_m.piece[k*8+l]&(64+128));// to bishop
+				else if( m=='r') b_m.piece[k*8+l]=4+(b_m.piece[k*8+l]&(64+128));// to rook
+				b_m.hash_key=get_TT_hash_key(&b_m); // update TT hash
+				set_bitboards(&b_m); // set bitboards
+				b_m.mat_key=get_mat_key(&b_m);// set material key
+				offset++;
+			}
+
+			// add new hash after each move
+			hl=b_m.hash_key;
+			if( b_m.player==2 ) hl^=player_zorb;
+			hash_history[halfmovemade++]=hl;
+		}
+	}
+#if ALLOW_LOG
+	print_position(sss,&b_m);
+	fprintf(f_log,"    [DO]incoming FEN board:%s",sss);
+#endif
+	// save board - need to look at it while pondering
+	b_l=b_m;
+}
+
+
 int main(int argc, char **argv) {
 
 	char *input = nullptr;
-	UINT64 *hash_history=(UINT64*)malloc(1200*8);	// history of all hashes in the current game.
-	board b_l;										// local board
-	unsigned int i,j,k,l,offset;
-	int base_moves=0;
+	unsigned int i,j,k,offset;
 	char sss[300];
 
 #if ALLOW_LOG
@@ -440,6 +619,30 @@ int main(int argc, char **argv) {
 #endif
 
 	init_all(0);								// perform initializations
+
+
+	if (argc >= 2 && (strcmp("bench", argv[1]) == 0)) {
+		uint32_t hashMB { };
+		uint32_t depth { };
+		uint32_t threads { };
+
+		if (argc >= 3) {
+			sscanf(argv[2], "%u", &hashMB);
+		}
+
+		if (argc >= 4) {
+			sscanf(argv[3], "%u", &depth);
+		}
+
+		if (argc >= 5) {
+			sscanf(argv[4], "%u", &threads);
+		}
+
+		bench(hashMB, depth, threads);
+
+		return 0;
+	}
+
 	while(1){// start of main - infinite - loop ***************************************************************************
 
 		if (input) {
@@ -519,14 +722,9 @@ int main(int argc, char **argv) {
 				printf("info param1 %d\n",param1);
 				// end of logic for parameter tuning**************************************************************************************
 				*/
-				stop_th();// stop pondering thread
+				SearchControl::uciNewGame();
 				offset+=11;
-				init_board(0,&b_m);
 				//init_board_FEN("rn3rk1/pp1bppbp/1q1p1np1/2pP4/4PB2/1NN5/PPP1BPPP/R2QR1K1 b - - 8 11");// test board
-				halfmovemade=base_moves=0;
-				#if ALLOW_LOG
-				fprintf(f_log,"    [DO]new\n");
-				#endif
 			}else if( str_comp(input+offset,"quit") ){// ********************************************************************************* quit
 				#if ALLOW_LOG
 				fprintf(f_log,"    [DO]quit\n");
@@ -556,8 +754,7 @@ int main(int argc, char **argv) {
 				pass_message_to_GUI(sss);
 			}else if( str_comp(input+offset,"isready") ){// ****************************************************************************** isready
 				offset+=7;
-				sprintf(sss,"readyok\n");
-				pass_message_to_GUI(sss);
+				SearchControl::isReady();
 			}else if( str_comp(input+offset,"setoption name") ){// *********************************************************************** setoption
 				offset+=15;// blank
 				if( str_comp(input+offset,"Threads value") ){// ************************************************************************** setoption Threads
@@ -568,11 +765,7 @@ int main(int argc, char **argv) {
 						i=i*10+input[offset]-'0';
 						offset++;
 					}
-					Threads=std::min(56U,std::max(1U,i)); // apply min and max
-					init_threads(Threads-1);
-					#if ALLOW_LOG
-					fprintf(f_log,"    [DO]use %u cores\n",i);
-					#endif
+					SearchControl::setOptionThreads(i);
 				}else if( str_comp(input+offset,"Hash value") ){// *********************************************************************** setoption Hash
 					offset+=11;
 					i=input[offset]-'0';
@@ -581,19 +774,7 @@ int main(int argc, char **argv) {
 						i=i*10+input[offset]-'0';
 						offset++;
 					}
-					i=i+(i>>2);// increase by 25%, just in case
-					i=std::min(65536U,std::max(1U,i)); // apply min and max
-					UINT64 ii=i;
-					ii=ii*1024;
-					ii=ii*1024;
-					ii=ii/sizeof(HashSlotStorageType); // this approach (step by step) allows 4Gb or more to be used
-					uint32_t bit;
-					BSR64l(&bit,ii);
-					HBITS=bit;
-					init_hash();
-					#if ALLOW_LOG
-					fprintf(f_log,"    [DO]use %d Mb of memory\n",int((UINT64(1)<<(HBITS-20))*sizeof(hash)));
-					#endif
+					SearchControl::setOptionHash(i);
 				}else if( str_comp(input+offset,"SyzygyPath value") ){// **************************************************************** setoption SyzygyPath
 					offset+=17;// skip blank
 					i=0;
@@ -611,12 +792,9 @@ int main(int argc, char **argv) {
 				}else if( str_comp(input+offset,"Ponder value") ){// ********************************************************************* setoption Ponder
 					offset+=13;// skip blank
 					if( str_comp(input+offset+1,"rue") ) // True, bot T and t.
-						pondering_allowed=1;
+						SearchControl::setOptionPonder(true);
 					else// assume false
-						pondering_allowed=0;
-					#if ALLOW_LOG
-					fprintf(f_log,"    [DO]pondering allowed: %d\n",pondering_allowed);
-					#endif
+						SearchControl::setOptionPonder(false);
 					while( input[offset]!=10 && input[offset]!=13 && input[offset]!=' ' && input[offset]!=0 ) offset++;// skip to next non-blank
 				}else if( str_comp(input+offset,"UseEGTBInsideSearch value") ){// ********************************************************************* setoption UseEGTBInsideSearch
 					offset+=26;// skip blank
@@ -637,92 +815,34 @@ int main(int argc, char **argv) {
 					#endif
 				}
 			}else if( str_comp(input+offset,"position") ){// ***************************************************************************** position
+				const char *positionDesc = "";
+				const char *moves = nullptr;
+
 				offset+=9;// skip blank
-				halfmovemade=0;
+				positionDesc = input + offset;
+
 				if( str_comp(input+offset,"startpos") ){
-					init_board_FEN("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",&b_m);// initial board
 					offset+=9;// skip "startpos "
 				}else{
 					offset+=4;// skip "fen "
-					init_board_FEN(input+offset,&b_m);// FEN from winboard
 					while( input[offset]!=10 && input[offset]!=13  && input[offset]!='m') offset++;// skip FEN: it does not end on space, go to the new line! Or to "moves"
 					if( input[offset]!='m' ) offset++;
 				}
-				
-				// add new hash
-				UINT64 hl=b_m.hash_key;
-				if( b_m.player==2 ) hl^=player_zorb;
-				hash_history[halfmovemade++]=hl;
 
 				// process moves
 				if( str_comp(input+offset,"moves") ){// ********************************************************************************* position moves
 					offset+=6;// blank
-					while( input[offset]>='a' && input[offset]<='h' && input[offset+1]>='1' && input[offset+1]<='8' && input[offset+2]>='a' && input[offset+2]<='h' && input[offset+3]>='1' && input[offset+3]<='8' ){// move made - process it
-						i=input[offset++]-'a';j=input[offset++]-'1';// from
-						k=input[offset++]-'a';l=input[offset++]-'1';// to
-						unsigned char m=input[offset++];// promotion to piece "m"
-						unmake d;
-						d.promotion=0;
-						make_move(&b_m,i*8+j,k*8+l,&d); // this updates player and sign of score.
-						if( m!=0 && m!=' ' && m!=10 && m!=13 ){// promotion to other than queen. Change the piece. And update TT hash and slider bitboards.
-							if( m=='n') b_m.piece[k*8+l]=2+(b_m.piece[k*8+l]&(64+128));// to knight
-							else if( m=='b') b_m.piece[k*8+l]=3+(b_m.piece[k*8+l]&(64+128));// to bishop
-							else if( m=='r') b_m.piece[k*8+l]=4+(b_m.piece[k*8+l]&(64+128));// to rook
-							b_m.hash_key=get_TT_hash_key(&b_m); // update TT hash
-							set_bitboards(&b_m); // set bitboards
-							b_m.mat_key=get_mat_key(&b_m);// set material key
-							offset++;
-						}
-			
-						// add new hash after each move
-						hl=b_m.hash_key;
-						if( b_m.player==2 ) hl^=player_zorb;
-						hash_history[halfmovemade++]=hl;
-					}
+					moves = input + offset;
 				}
-				#if ALLOW_LOG
-				print_position(sss,&b_m);
-				fprintf(f_log,"    [DO]incoming FEN board:%s",sss);
-				#endif
-				// save board - need to look at it while pondering
-				b_l=b_m;
+
+				SearchControl::position(positionDesc, moves);
+
 			}else if( str_comp(input+offset,"stop") ){// ********************************************************************************* stop
 				offset+=5;
-				#if ALLOW_LOG
-				fprintf(f_log,"    [DO]stopping calculation thread...\n");
-				#endif
-				stop_th();// stop pondering thread
+				SearchControl::stop();
 			}else if( str_comp(input+offset,"ponderhit") ){// ***************************************************************************** ponderhit
 				offset+=10;
-				ponder=0;			// turn pondering off
-				hash_data hd;// hash data
-				int tn=get_time();
-				unsigned char list[256];
-
-				// stop the calc! I already spent 1/0 of min and max time. Or only 1 move. Or good capture.
-				if( tn>t_min_l
-					|| legal_move_count(&b_l,list)==1
-					|| (lookup_hash(0,&b_l,&hd,0) && hd.alp==hd.be && move_is_legal(&b_l,hd.move[0],hd.move[1]) && hd.depth>10 && abs(hd.alp)<9988 && !((b_l.piece[hd.move[0]]&7)==1 && ((hd.move[1]&7)==7 || (hd.move[1]&7)==0)) && see_move(&b_l,hd.move[0],hd.move[1])>200) 
-				){
-					#if ALLOW_LOG
-					if( tn>t_min_l ) i=1;
-					else if( legal_move_count(&b_l,list)==1 ) i=2;
-					else i=3;
-					fprintf(f_log,"    [DO]ponderhit - terminate the search right now for reason %d. Time elapsed %d. Time for search is min/max/max1 %d/%d/%d\n",i,tn-time_start,t_min_l-time_start,timeout_complete_l-time_start,timeout_l-time_start);
-					#endif
-					timer_depth=0;
-					my_time+=tn-time_start; // increase apparent time limit, so that i don't see this as a timeout.
-					timeout=timeout_complete=tn-1000; // in the past - break now.
-				}else{// here i could increase my time by elapsed time and recompute min/max. Not doing that is conservative.
-					if( timeout_complete==timeout ){
-						timeout=timeout_complete=timeout_complete_l;			// restore timeouts - both the same (long)
-					}else{
-						timeout_complete=timeout_complete_l;timeout=timeout_l;	// restore timeouts - different ones
-					}
-					#if ALLOW_LOG
-					fprintf(f_log,"    [DO]ponderhit - switch to normal search. Time elapsed %d. Time for search is min/max/max1 %d/%d/%d\n",tn-time_start,t_min_l-time_start,timeout_complete_l-time_start,timeout_l-time_start);
-					#endif
-				}
+				SearchControl::ponderHit();
 			}else if( str_comp(input+offset,"go") ){// *********************************************************************************** go
 				offset+=3;
 				ponder=0;
@@ -814,9 +934,9 @@ int main(int argc, char **argv) {
 					}else break;// unknown "go" parameter - end of go command.
 				}// end of loop over "go" parameters
 				time_start=get_time(); // start counting time as soon as "go" parameters are processed.
-				if( moves_remaining>=base_moves && moves_remaining ){// do this oputside the loop, so that both time and moves to go are set
-					base_moves=moves_remaining;
-					time_per_move_base=my_time/base_moves; // update base time per move
+				if( moves_remaining>=SearchControl::base_moves && moves_remaining ){// do this oputside the loop, so that both time and moves to go are set
+					SearchControl::base_moves=moves_remaining;
+					time_per_move_base=my_time/SearchControl::base_moves; // update base time per move
 					#if ALLOW_LOG
 					fprintf(f_log,"    [DO]set standard time per move to %u msec.\n",time_per_move_base);
 					#endif
@@ -827,8 +947,8 @@ int main(int argc, char **argv) {
 				if( halfmovemade ){
 					for(k=i=0;i<=std::min<unsigned>(halfmovemade-1,b_m.halfmoveclock);++i){
 						for(j=i+1;j<=std::min<unsigned>(halfmovemade-1,b_m.halfmoveclock);++j)
-							if( hash_history[halfmovemade-1-j]==hash_history[halfmovemade-1-i] ){
-								b_m.position_hist[99-k]=hash_history[halfmovemade-1-i];
+							if( SearchControl::hash_history[halfmovemade-1-j]==SearchControl::hash_history[halfmovemade-1-i] ){
+								b_m.position_hist[99-k]=SearchControl::hash_history[halfmovemade-1-i];
 								k++;
 								break;
 							}
@@ -859,16 +979,12 @@ int main(int argc, char **argv) {
 				break; // skip unrecognized command
 			}
 
-			// skip CR and new line
-			while( input[offset]==10 || input[offset]==13 || input[offset]==' ' )
-					offset++;
-
 			// close/reopen log file. This is the only place where it is closed.
 			#if ALLOW_LOG
 			fclose(f_log);
 			f_log=fopen(LOG_FILE1,"a");
 			#endif
-		} while(inputBufSize>offset);
+		} while(false);
 	}// end of infinite loop
 	return(0);
 }

@@ -1,6 +1,7 @@
 .PHONY: all clean realclean distclean
 
 FIZBO-SRC := \
+	bench.cpp \
 	board_util.cpp \
 	engine.cpp \
 	eval.cpp \

@@ -43,7 +43,7 @@ typedef struct{
 	unsigned char bound_type;	// score type: 0/1/2=exact,lower,upper.
 } hash_data; // 16 bytes
 
-void init_hash(void);
+void init_hash(uint32_t megabytes);
 void clear_hash(unsigned int);
 unsigned int lookup_hash(unsigned int depth, const board *b, hash_data *hd, unsigned int ply);
 void add_hash(int,int,int,unsigned char*,unsigned int,const board*,unsigned int);
